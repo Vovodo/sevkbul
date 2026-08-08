@@ -6,12 +6,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 import app.database as database
+import app.models  # Tablo tanımlarını yükle
 from app.routers import inventory, shipments, scan, operation
 from app.services.lookup_cache import lookup_cache
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Veritabanı tabloları yoksa otomatik oluştur
+    database.Base.metadata.create_all(bind=database.engine)
     db = database.SessionLocal()
     try:
         lookup_cache.load_all_active(db)
