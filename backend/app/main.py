@@ -45,6 +45,7 @@ app.include_router(operation.router)
 
 @app.api_route("/", methods=["GET", "HEAD"])
 @app.api_route("/ping", methods=["GET", "HEAD"])
+@app.api_route("/health", methods=["GET", "HEAD"])
 @app.api_route("/healthz", methods=["GET", "HEAD"])
 @app.api_route("/api/health", methods=["GET", "HEAD"])
 def uptimerobot_health(request: Request):
