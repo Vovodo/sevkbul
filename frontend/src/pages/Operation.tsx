@@ -31,16 +31,15 @@ export default function OperationPage() {
 
   useEffect(() => {
     initAudio();
-    fetch('/api/health')
-      .then(r => r.json())
+    api.healthCheck()
       .then(h => {
         if (!h.features?.includes('shipment_targets')) {
-          setError('Backend güncel değil. "SevkiyatBul - Backend" penceresini kapatıp start.cmd ile yeniden başlatın.');
+          setError('Backend sürümü güncel değil.');
         } else if (!h.features?.includes('shipment_reset')) {
-          setError('Sıfırlama için backend yeniden başlatılmalı: scripts\\restart-backend.cmd — ardından frontend penceresini de yeniden başlatın.');
+          setError('Sıfırlama servisi için backend güncellemesi gerekiyor.');
         }
       })
-      .catch(() => setError('Backend bağlantısı kurulamadı. start.cmd ile sunucuları başlatın.'));
+      .catch(() => setError('Backend bağlantısı kurulamadı.'));
     api.getInventoryStats().then(s => {
       setStockLoaded(s.total_labels > 0);
       setStockCount(s.total_labels);

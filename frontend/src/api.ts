@@ -1,4 +1,11 @@
-const API_BASE = import.meta.env.VITE_API_URL || '';
+function getApiBase(): string {
+  let url = (import.meta.env.VITE_API_URL || '').trim();
+  url = url.replace(/\/+$/, '');
+  url = url.replace(/\/api(\/v\d+)?$/i, '');
+  return url;
+}
+
+const API_BASE = getApiBase();
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, options);
@@ -6,7 +13,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     const err = await res.json().catch(() => ({ detail: 'Bir hata oluştu' }));
     const detail = typeof err.detail === 'string' ? err.detail : 'Bir hata oluştu';
     if (res.status === 404 && detail === 'Not Found') {
-      throw new Error('API endpoint bulunamadı. Backend penceresini kapatıp start.cmd ile yeniden başlatın.');
+      throw new Error('API endpoint bulunamadı.');
     }
     throw new Error(detail);
   }
@@ -77,6 +84,9 @@ export interface ScannedLabel {
 }
 
 export const api = {
+  healthCheck: () =>
+    request<{ status: string; service: string; version: string; features: string[] }>('/api/health'),
+
   importStock: async (file: File) => {
     const form = new FormData();
     form.append('file', file);
@@ -84,7 +94,7 @@ export const api = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: 'Import hatası' }));
       const detail = err.detail || 'Import hatası';
-      if (res.status === 404) throw new Error('API endpoint bulunamadı. Backend\'i yeniden başlatın.');
+      if (res.status === 404) throw new Error('API endpoint bulunamadı.');
       throw new Error(detail);
     }
     return res.json() as Promise<ImportResult>;
@@ -108,7 +118,7 @@ export const api = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: 'Import hatası' }));
       const detail = err.detail || 'Import hatası';
-      if (res.status === 404) throw new Error('API endpoint bulunamadı. Backend\'i yeniden başlatın.');
+      if (res.status === 404) throw new Error('API endpoint bulunamadı.');
       throw new Error(detail);
     }
     return res.json() as Promise<{ targets: ShipmentTarget[]; successful: number }>;
