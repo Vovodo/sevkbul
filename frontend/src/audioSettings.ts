@@ -1,20 +1,16 @@
 export type SuccessSoundId =
-  | 'triumph'
-  | 'golden'
-  | 'pulse'
-  | 'fanfare'
   | 'cyber_chime'
-  | 'crystal_bell'
-  | 'majestic_arpeggio';
+  | 'industrial_laser'
+  | 'hyper_beep'
+  | 'sonic_chime'
+  | 'stadium_horn';
 
 export type FailureSoundId =
-  | 'soft'
-  | 'tick'
-  | 'muted'
-  | 'gentle'
-  | 'siren_warn'
-  | 'cyber_deny'
-  | 'sub_impact';
+  | 'warehouse_alarm'
+  | 'hyper_error'
+  | 'metal_strike'
+  | 'emergency_buzz'
+  | 'sub_impact_alarm';
 
 export interface AudioSettings {
   enabled: boolean;
@@ -25,33 +21,29 @@ export interface AudioSettings {
 }
 
 export const SUCCESS_SOUND_OPTIONS: { id: SuccessSoundId; label: string; desc: string }[] = [
-  { id: 'triumph', label: 'Zafer Akordu', desc: 'Yükselen 4 nota + parlak final — sevkiyat ürünü' },
-  { id: 'golden', label: 'Altın Ding', desc: 'Sıcak zil tonu, derin bas — hoş onay' },
-  { id: 'pulse', label: 'Bas Nabız', desc: 'Ritmik bas + yükselen ton' },
-  { id: 'fanfare', label: 'Tamamlama Fanfarı', desc: '6 notalık yükselen fanfar — güçlü onay' },
-  { id: 'cyber_chime', label: 'Siber Melodi', desc: 'Gelecek nesil sentezör arpeji + kristal tonlar' },
-  { id: 'crystal_bell', label: 'Kristal Zil', desc: 'Yüksek frekanslı zil tınlaması + derin bas darbesi' },
-  { id: 'majestic_arpeggio', label: 'Majestik Arpej', desc: 'Görkemli 5 notalı yükselen arpej ve süzülen tınlama' },
+  { id: 'cyber_chime', label: 'Siber Melodi ⭐', desc: 'Gelecek nesil kristal sentezör arpeji — favori onay sesi' },
+  { id: 'industrial_laser', label: 'Endüstriyel Lazer 🚀', desc: '40m mesafeden duyulan çift yüksek lazer + tiz onay çınlaması' },
+  { id: 'hyper_beep', label: 'Hiper Okuyucu Bip ⚡', desc: 'El terminali tarzı Ultra-Yüksek frekanslı çift bip (2.4kHz - 3.2kHz)' },
+  { id: 'sonic_chime', label: 'Sonik Akort 🎵', desc: 'Parlak ve yüksek enerjili 3 notalı kristal onay akordu' },
+  { id: 'stadium_horn', label: 'Depo Onay Kornosu 🎺', desc: 'Gürültülü depo ortamında makine sesini yırtan 3 notalı güçlü kornolar' },
 ];
 
 export const FAILURE_SOUND_OPTIONS: { id: FailureSoundId; label: string; desc: string }[] = [
-  { id: 'soft', label: 'Çift Bonk + Buzz', desc: 'BONK-BONK + alçalan buzz — sevkiyat dışı (önerilen)' },
-  { id: 'tick', label: 'Üçlü Bonk', desc: 'BONK-BONK-BONK — yanlış okutma, çok ayırt edilir' },
-  { id: 'muted', label: 'Derin Red', desc: 'İki ağır bas + sert alçalma — uzaktan net' },
-  { id: 'gentle', label: 'İkili Red', desc: 'Bonk-buzz tekrarı — kısa ama belirgin' },
-  { id: 'siren_warn', label: 'Endüstriyel Siren', desc: 'Yüksek uyarılı ritmik depo ikaz sireni' },
-  { id: 'cyber_deny', label: 'Siber Red', desc: 'Metalik dijital buzzy frekans + anında sert alçalma' },
-  { id: 'sub_impact', label: 'Derin Darbe', desc: 'Derin alt bas darbesi + keskin ikaz frekansı' },
+  { id: 'warehouse_alarm', label: 'Depo İkaz Sireni 🚨', desc: '30-40 metre uzaklıktan net duyulan ritmik çift testere ikaz sireni (Önerilen)' },
+  { id: 'hyper_error', label: 'Hiper Red İkazı 💥', desc: 'Keskin kare dalga 3\'lü sert vuruş — anında fark edilir red' },
+  { id: 'metal_strike', label: 'Metalik İptal 🔨', desc: 'Tiz ve sert metalik darbe + hızlı alçalan frekans ikazı' },
+  { id: 'emergency_buzz', label: 'Acil İkaz Hörnü 🔊', desc: 'Depo zemininde yankılanan çift buzzy ikaz kornosu' },
+  { id: 'sub_impact_alarm', label: 'Ağır İkaz Darbesi 💣', desc: 'Derin vurmalı bas + keskin alçalan dual siren' },
 ];
 
 const STORAGE_KEY = 'sevkiyatbul_audio_settings';
 
 export const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
   enabled: true,
-  volume: 0.95,
-  bassBoost: 0.9,
-  successSound: 'triumph',
-  failureSound: 'soft',
+  volume: 1.0,
+  bassBoost: 0.8,
+  successSound: 'cyber_chime',
+  failureSound: 'warehouse_alarm',
 };
 
 export function loadAudioSettings(): AudioSettings {
