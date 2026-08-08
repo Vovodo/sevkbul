@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
@@ -21,7 +22,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="SevkiyatBul - FIFO Kontrol Sistemi",
-    version="1.0.0",
+    version="2.1.0",
     lifespan=lifespan,
 )
 
@@ -39,14 +40,30 @@ app.include_router(scan.router)
 app.include_router(operation.router)
 
 
-@app.get("/api/health")
-def health_check():
-    return {
-        "status": "ok",
-        "service": "SevkiyatBul",
-        "version": "2.1",
-        "features": [
-            "shipment_targets", "global_scan", "operation_flow",
-            "shipment_reset", "scan_undo", "scanned_labels",
-        ],
-    }
+@app.api_route("/", methods=["GET", "HEAD"])
+@app.api_route("/ping", methods=["GET", "HEAD"])
+@app.api_route("/healthz", methods=["GET", "HEAD"])
+@app.api_route("/api/health", methods=["GET", "HEAD"])
+def uptimerobot_health(request: Request):
+    """
+    UptimeRobot & Uptime Monitoring Endpoint:
+    Ücretsiz UptimeRobot istekleri HEAD metodu ile gönderilmektedir.
+    Bu fonksiyon hem HEAD hem GET isteklerine HTTP 200 OK yanıtı döner.
+    """
+    headers = {"X-Uptime-Robot": "OK", "Cache-Control": "no-cache, no-store, must-revalidate"}
+    if request.method == "HEAD":
+        return Response(status_code=200, headers=headers)
+
+    return JSONResponse(
+        content={
+            "status": "ok",
+            "service": "SevkiyatBul",
+            "version": "2.1.0",
+            "uptimerobot": "enabled (HEAD & GET supported)",
+            "features": [
+                "shipment_targets", "global_scan", "operation_flow",
+                "shipment_reset", "scan_undo", "scanned_labels", "uptimerobot_head",
+            ],
+        },
+        headers=headers,
+    )
