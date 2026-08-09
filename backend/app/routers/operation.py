@@ -21,6 +21,20 @@ from app.ws_manager import ws_manager
 router = APIRouter(prefix="/api/shipment", tags=["shipment"])
 
 
+def _broadcast_full_status(db: Session, event: str, extra: dict | None = None):
+    """Tüm bağlı istemcilere güncel sevkiyat durumunu broadcast et."""
+    shipments = get_active_shipments(db)
+    status_list = [s if isinstance(s, dict) else s.model_dump() if hasattr(s, 'model_dump') else dict(s) for s in shipments]
+    targets = [ShipmentTargetSchema(id=t.id, reference=t.reference, target_quantity=t.target_quantity).model_dump() for t in list_targets(db)]
+    payload = {
+        "shipments": status_list,
+        "targets": targets,
+    }
+    if extra:
+        payload.update(extra)
+    ws_manager.broadcast_sync(event, payload)
+
+
 @router.get("/targets", response_model=list[ShipmentTargetSchema])
 def get_targets(db: Session = Depends(get_db)):
     return [ShipmentTargetSchema(id=t.id, reference=t.reference, target_quantity=t.target_quantity) for t in list_targets(db)]
@@ -32,12 +46,15 @@ def create_target(req: ShipmentTargetCreateSchema, db: Session = Depends(get_db)
         t = add_target(db, req.reference, req.target_quantity)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return ShipmentTargetSchema(id=t.id, reference=t.reference, target_quantity=t.target_quantity)
+    result = ShipmentTargetSchema(id=t.id, reference=t.reference, target_quantity=t.target_quantity)
+    _broadcast_full_status(db, "target_add")
+    return result
 
 
 @router.delete("/targets")
 def delete_targets(db: Session = Depends(get_db)):
     clear_targets(db)
+    _broadcast_full_status(db, "target_clear")
     return {"ok": True}
 
 
@@ -58,7 +75,7 @@ async def import_targets_excel(
     if result.missing_columns:
         raise HTTPException(status_code=400, detail=f"Eksik kolonlar: {', '.join(result.missing_columns)}")
 
-    return ShipmentTargetImportResultSchema(
+    response = ShipmentTargetImportResultSchema(
         total_rows=result.total_rows,
         successful=result.successful,
         error_count=len(result.errors),
@@ -66,6 +83,8 @@ async def import_targets_excel(
         missing_columns=result.missing_columns,
         targets=[ShipmentTargetSchema(**t) for t in result.targets],
     )
+    _broadcast_full_status(db, "target_import")
+    return response
 
 
 @router.post("/find", response_model=ShipmentFindResultSchema)
@@ -80,13 +99,15 @@ def find_shipment_pools(db: Session = Depends(get_db)):
         prog = get_shipment_progress(db, s["shipment_id"])
         shipments.append(ShipmentProgressSchema(**prog))
 
-    return ShipmentFindResultSchema(shipments=shipments, errors=result["errors"])
+    response = ShipmentFindResultSchema(shipments=shipments, errors=result["errors"])
+    _broadcast_full_status(db, "find")
+    return response
 
 
 @router.post("/reset")
 def reset_shipments(db: Session = Depends(get_db)):
     count = reset_active_shipments(db)
-    ws_manager.broadcast_sync("reset", {"cancelled": count})
+    _broadcast_full_status(db, "reset", {"cancelled": count})
     return {"cancelled": count}
 
 
@@ -127,11 +148,7 @@ def remove_scan(shipment_id: int, label: str, db: Session = Depends(get_db)):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     result = ShipmentProgressSchema(**progress)
-    ws_manager.broadcast_sync("undo", {
-        "shipment_id": shipment_id,
-        "label": label,
-        "progress": result.model_dump(),
-    })
+    _broadcast_full_status(db, "undo", {"shipment_id": shipment_id, "label": label})
     return result
 
 
@@ -148,5 +165,5 @@ def global_scan(req: ScanRequest, db: Session = Depends(get_db)):
         shipment_id=r.shipment_id, fifo_date=r.fifo_date,
         success=r.success, already_scanned=r.already_scanned,
     )
-    ws_manager.broadcast_sync("scan", scan_result.model_dump())
+    _broadcast_full_status(db, "scan", {"scan": scan_result.model_dump()})
     return scan_result

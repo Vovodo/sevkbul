@@ -6,6 +6,7 @@ from app.schemas import ImportResultSchema, RowErrorSchema, InventoryStatsSchema
 from app.services.excel_import import import_excel
 from app.services.lookup_cache import lookup_cache
 from app.models import InventoryLabel
+from app.ws_manager import ws_manager
 from sqlalchemy import func
 
 router = APIRouter(prefix="/api/inventory", tags=["inventory"])
@@ -35,6 +36,14 @@ async def upload_stock_excel(
         )
 
     lookup_cache.reload_inventory_labels(db)
+
+    total = db.query(func.count(InventoryLabel.id)).scalar() or 0
+    refs = db.query(func.count(func.distinct(InventoryLabel.reference))).scalar() or 0
+    ws_manager.broadcast_sync("stock_import", {
+        "total_labels": total,
+        "total_references": refs,
+        "successful": result.successful,
+    })
 
     return ImportResultSchema(
         total_rows=result.total_rows,

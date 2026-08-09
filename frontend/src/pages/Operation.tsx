@@ -59,25 +59,18 @@ export default function OperationPage() {
 
   // ─── Gerçek Zamanlı Canlı Güncelleme (WebSocket) ───
   const handleWsMessage = useCallback((msg: WsMessage) => {
-    if (msg.event === 'scan' || msg.event === 'undo') {
-      // Başka bir kullanıcı okutma/undo yaptı → sevkiyat durumunu güncelle
-      api.getShipmentStatus().then(s => {
-        if (s.length > 0) {
-          setShipments(s);
-          if (phase === 'setup') {
-            setPhase('scanning');
-            setShowSetup(false);
-          }
-        }
-      }).catch(() => {});
+    const d = msg.data;
 
-      // Eğer genişletilmiş sevkiyat varsa, okutulan etiketleri de güncelle
-      if (expandedId != null) {
-        api.getScannedLabels(expandedId).then(labels => {
-          setScannedMap(prev => ({ ...prev, [expandedId]: labels }));
-        }).catch(() => {});
+    if (msg.event === 'stock_import') {
+      // Başka bir kullanıcı stok yükledi
+      if (d?.total_labels != null) {
+        setStockLoaded(d.total_labels > 0);
+        setStockCount(d.total_labels);
       }
-    } else if (msg.event === 'reset') {
+      return;
+    }
+
+    if (msg.event === 'reset') {
       // Başka bir kullanıcı sevkiyatı sıfırladı
       setShipments([]);
       setPhase('setup');
@@ -86,6 +79,32 @@ export default function OperationPage() {
       setScannedMap({});
       setRecentScans([]);
       setLastScan(null);
+      // Hedefleri de güncelle
+      if (d?.targets) {
+        setTargets(d.targets);
+      }
+      return;
+    }
+
+    // Tüm diğer olaylarda (scan, undo, find, target_add, target_import, target_clear)
+    // Backend her zaman güncel shipments ve targets listesini gönderir
+    if (d?.shipments) {
+      setShipments(d.shipments);
+      if (d.shipments.length > 0 && phase === 'setup') {
+        setPhase('scanning');
+        setShowSetup(false);
+      }
+    }
+
+    if (d?.targets) {
+      setTargets(d.targets);
+    }
+
+    // Okutma veya undo sonrası genişletilmiş sevkiyatın etiketlerini güncelle
+    if ((msg.event === 'scan' || msg.event === 'undo') && expandedId != null) {
+      api.getScannedLabels(expandedId).then(labels => {
+        setScannedMap(prev => ({ ...prev, [expandedId]: labels }));
+      }).catch(() => {});
     }
   }, [phase, expandedId]);
 

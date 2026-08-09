@@ -12,11 +12,12 @@ function getWsUrl(): string {
   return `${proto}//${window.location.host}/ws`;
 }
 
-export type WsEventType = 'scan' | 'undo' | 'reset';
+export type WsEventType = 'scan' | 'undo' | 'reset' | 'find' | 'target_add' | 'target_clear' | 'target_import' | 'stock_import';
 
 export interface WsMessage {
   event: WsEventType;
-  data: unknown;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: any;
 }
 
 type WsMessageHandler = (msg: WsMessage) => void;
