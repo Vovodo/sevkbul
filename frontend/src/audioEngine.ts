@@ -207,6 +207,69 @@ function playSuccessStadiumHorn(output: AudioNode, t: number) {
   playTone(output, 1760.00, t + 0.12, 0.4, 'sine', 0.5, 0.003);
 }
 
+/* ─── TEKRAR OKUTMA SESİ (ZATEN OKUTULDU — Başarıya yakın hoş, ama ayırt edilebilir) ─── */
+
+/**
+ * Tekrar okutma için özel ses zinciri:
+ * Başarı zinciri ile aynı yapıda ama biraz daha yumuşak ve farklı frekans profili.
+ */
+function createDuplicateChain(settings: AudioSettings, startTime: number, endTime: number) {
+  const audioCtx = getContext();
+  const input = audioCtx.createGain();
+
+  // Başarı sesinden ayırt etmek için 2.2 kHz civarı boost (daha sıcak ton)
+  const earBoost = audioCtx.createBiquadFilter();
+  earBoost.type = 'peaking';
+  earBoost.frequency.value = 2200;
+  earBoost.Q.value = 1.5;
+  earBoost.gain.value = 5.0;
+
+  const bass = audioCtx.createBiquadFilter();
+  bass.type = 'lowshelf';
+  bass.frequency.value = 130;
+  bass.gain.value = 4 + settings.bassBoost * 8;
+
+  const master = audioCtx.createGain();
+  master.gain.setValueAtTime(settings.volume * 3.0, startTime);
+
+  const comp = audioCtx.createDynamicsCompressor();
+  comp.threshold.value = -2.0;
+  comp.knee.value = 3.0;
+  comp.ratio.value = 12.0;
+  comp.attack.value = 0.001;
+  comp.release.value = 0.06;
+
+  input.connect(earBoost);
+  earBoost.connect(bass);
+  bass.connect(master);
+  master.connect(comp);
+  comp.connect(audioCtx.destination);
+
+  const fade = audioCtx.createGain();
+  fade.gain.setValueAtTime(1, startTime);
+  fade.gain.setValueAtTime(1, Math.max(startTime, endTime - 0.03));
+  fade.gain.linearRampToValueAtTime(0.001, endTime);
+  fade.connect(input);
+  return fade;
+}
+
+/**
+ * Tekrar Okutma Sesi: Yumuşak Çift Zil
+ * Başarı sesine benzer hoş bir ton ama ALÇALAN çift nota ile ayırt edilir.
+ * Başarı sesi yükselir → Tekrar okutma sesi alçalır (kulak hemen farkı anlar)
+ */
+function playDuplicateSound(output: AudioNode, t: number) {
+  // Yüksek notadan başla, alçalarak çift zil çal
+  playTone(output, 1567.98, t, 0.22, 'sine', 0.85, 0.002);       // Yüksek tiz zil
+  playTone(output, 3135.96, t, 0.15, 'triangle', 0.3, 0.002);    // Harmonik parıltı
+  playTone(output, 1046.50, t + 0.14, 0.28, 'sine', 0.9, 0.002); // Alçalan ikinci zil
+  playTone(output, 2093.00, t + 0.14, 0.2, 'triangle', 0.35, 0.002); // Harmonik
+  // Yumuşak bas dolgu (derinlik hissi)
+  playTone(output, 220, t, 0.35, 'sine', 0.5, 0.005);
+}
+
+const DUPLICATE_DURATION = 0.5;
+
 /* ─── BAŞARISIZ SESLERİ (30-40M UZAKTAN NET AYIRT EDİLEN İKAZ PROFiLLERİ) ─── */
 
 /** Depo İkaz Sireni (Ritmik Çift Testere İkaz Sireni) */
@@ -305,11 +368,15 @@ export function previewFailureSound(id: FailureSoundId, settings?: AudioSettings
   playFailurePreset(id, s);
 }
 
-export function playResultSound(category: 'success' | 'failure', settings?: AudioSettings) {
+export function playResultSound(category: 'success' | 'failure' | 'duplicate', settings?: AudioSettings) {
   const s = settings ?? loadAudioSettings();
   if (!s.enabled) return;
   if (category === 'success') {
     playSuccessPreset(s.successSound, s);
+  } else if (category === 'duplicate') {
+    const t = getContext().currentTime;
+    const output = createDuplicateChain(s, t, t + DUPLICATE_DURATION);
+    playDuplicateSound(output, t);
   } else {
     playFailurePreset(s.failureSound, s);
   }

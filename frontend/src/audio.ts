@@ -7,6 +7,7 @@ export type ScanResultType =
   | 'ZATEN OKUTULDU';
 
 const SUCCESS_RESULTS = new Set<string>(['SEVKİYAT ÜRÜNÜ', 'COMPLETE']);
+const DUPLICATE_RESULTS = new Set<string>(['ZATEN OKUTULDU']);
 
 export function initAudio() {
   warmupAudioEngine();
@@ -15,6 +16,8 @@ export function initAudio() {
 export function playScanSound(result: ScanResultType | 'COMPLETE') {
   if (SUCCESS_RESULTS.has(result)) {
     playResultSound('success');
+  } else if (DUPLICATE_RESULTS.has(result)) {
+    playResultSound('duplicate');
   } else {
     playResultSound('failure');
   }
