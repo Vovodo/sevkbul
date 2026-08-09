@@ -100,6 +100,24 @@ export default function OperationPage() {
       setTargets(d.targets);
     }
 
+    // Okutma bildirimi: tüm cihazlarda son okutma sonucunu göster
+    if (msg.event === 'scan' && d?.scan) {
+      const scanData = d.scan as ScanResponse;
+      setLastScan(scanData);
+
+      // Son Okutmalar listesine ekle
+      setRecentScans(prev => [{
+        label: scanData.label,
+        reference: scanData.reference,
+        quantity: scanData.quantity,
+        result: scanData.result,
+        time: new Date().toLocaleTimeString('tr-TR'),
+      }, ...prev].slice(0, 30));
+
+      // Bildirim banner'ını belirli süre sonra kaldır
+      setTimeout(() => setLastScan(null), 1200);
+    }
+
     // Okutma veya undo sonrası genişletilmiş sevkiyatın etiketlerini güncelle
     if ((msg.event === 'scan' || msg.event === 'undo') && expandedId != null) {
       api.getScannedLabels(expandedId).then(labels => {
