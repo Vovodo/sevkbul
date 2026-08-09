@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { api, ShipmentProgress, ScanResponse, ShipmentTarget, RecentScan, ScannedLabel } from '../api';
 import { playScanSound, getResultStyle, initAudio, ScanResultType } from '../audio';
 import SoundSettings from '../components/SoundSettings';
+import { useLiveUpdates, WsMessage } from '../useLiveUpdates';
 
 type Phase = 'setup' | 'scanning';
 
@@ -55,6 +56,40 @@ export default function OperationPage() {
   }, []);
 
   useEffect(() => { focusInput(); }, [isScanning, focusInput]);
+
+  // ─── Gerçek Zamanlı Canlı Güncelleme (WebSocket) ───
+  const handleWsMessage = useCallback((msg: WsMessage) => {
+    if (msg.event === 'scan' || msg.event === 'undo') {
+      // Başka bir kullanıcı okutma/undo yaptı → sevkiyat durumunu güncelle
+      api.getShipmentStatus().then(s => {
+        if (s.length > 0) {
+          setShipments(s);
+          if (phase === 'setup') {
+            setPhase('scanning');
+            setShowSetup(false);
+          }
+        }
+      }).catch(() => {});
+
+      // Eğer genişletilmiş sevkiyat varsa, okutulan etiketleri de güncelle
+      if (expandedId != null) {
+        api.getScannedLabels(expandedId).then(labels => {
+          setScannedMap(prev => ({ ...prev, [expandedId]: labels }));
+        }).catch(() => {});
+      }
+    } else if (msg.event === 'reset') {
+      // Başka bir kullanıcı sevkiyatı sıfırladı
+      setShipments([]);
+      setPhase('setup');
+      setShowSetup(true);
+      setExpandedId(null);
+      setScannedMap({});
+      setRecentScans([]);
+      setLastScan(null);
+    }
+  }, [phase, expandedId]);
+
+  useLiveUpdates(handleWsMessage);
 
   const handleStockUpload = async (file: File) => {
     setLoading('stock');

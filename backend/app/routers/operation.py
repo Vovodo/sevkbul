@@ -16,6 +16,7 @@ from app.services.shipment_service import get_active_shipments, get_shipment_pro
 from app.services.scan_service import process_global_scan
 from app.services.operation_service import reset_active_shipments, get_scanned_labels, undo_scan
 from app.models import ScanLog, InventoryLabel
+from app.ws_manager import ws_manager
 
 router = APIRouter(prefix="/api/shipment", tags=["shipment"])
 
@@ -85,6 +86,7 @@ def find_shipment_pools(db: Session = Depends(get_db)):
 @router.post("/reset")
 def reset_shipments(db: Session = Depends(get_db)):
     count = reset_active_shipments(db)
+    ws_manager.broadcast_sync("reset", {"cancelled": count})
     return {"cancelled": count}
 
 
@@ -124,7 +126,13 @@ def remove_scan(shipment_id: int, label: str, db: Session = Depends(get_db)):
         progress = undo_scan(db, shipment_id, label)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return ShipmentProgressSchema(**progress)
+    result = ShipmentProgressSchema(**progress)
+    ws_manager.broadcast_sync("undo", {
+        "shipment_id": shipment_id,
+        "label": label,
+        "progress": result.model_dump(),
+    })
+    return result
 
 
 @router.post("/scan", response_model=ScanResponseSchema)
@@ -133,10 +141,12 @@ def global_scan(req: ScanRequest, db: Session = Depends(get_db)):
         r = process_global_scan(db, req.label)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return ScanResponseSchema(
+    scan_result = ScanResponseSchema(
         result=r.result, label=r.label, reference=r.reference, quantity=r.quantity,
         scanned_quantity=r.scanned_quantity, remaining_quantity=r.remaining_quantity,
         progress_percent=r.progress_percent, is_complete=r.is_complete,
         shipment_id=r.shipment_id, fifo_date=r.fifo_date,
         success=r.success, already_scanned=r.already_scanned,
     )
+    ws_manager.broadcast_sync("scan", scan_result.model_dump())
+    return scan_result

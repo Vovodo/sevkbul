@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -9,6 +9,7 @@ import app.database as database
 import app.models  # Tablo tanımlarını yükle
 from app.routers import inventory, shipments, scan, operation
 from app.services.lookup_cache import lookup_cache
+from app.ws_manager import ws_manager
 
 
 @asynccontextmanager
@@ -68,7 +69,22 @@ def uptimerobot_health(request: Request):
             "features": [
                 "shipment_targets", "global_scan", "operation_flow",
                 "shipment_reset", "scan_undo", "scanned_labels", "uptimerobot_head",
+                "realtime_ws",
             ],
         },
         headers=headers,
     )
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """Gerçek zamanlı canlı güncelleme WebSocket endpoint'i."""
+    await ws_manager.connect(websocket)
+    try:
+        while True:
+            # İstemciden gelen ping/pong mesajlarını dinle (bağlantıyı canlı tut)
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
+    except Exception:
+        ws_manager.disconnect(websocket)
