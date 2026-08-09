@@ -11,9 +11,13 @@ from app.routers import inventory, shipments, scan, operation
 from app.services.lookup_cache import lookup_cache
 from app.ws_manager import ws_manager
 
+import asyncio
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # WebSocket broadcast için ana event loop referansını kaydet
+    ws_manager.set_event_loop(asyncio.get_running_loop())
     # Veritabanı tabloları yoksa otomatik oluştur
     database.Base.metadata.create_all(bind=database.engine)
     db = database.SessionLocal()

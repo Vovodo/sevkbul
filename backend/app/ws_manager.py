@@ -14,6 +14,11 @@ class ConnectionManager:
 
     def __init__(self) -> None:
         self.active_connections: list[WebSocket] = []
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def set_event_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Ana asyncio event loop referansını kaydet (lifespan'dan çağrılır)."""
+        self._loop = loop
 
     async def connect(self, websocket: WebSocket) -> None:
         await websocket.accept()
@@ -36,12 +41,16 @@ class ConnectionManager:
             self.disconnect(conn)
 
     def broadcast_sync(self, event: str, data: Any = None) -> None:
-        """Senkron context'ten broadcast başlat (REST endpoint'lerden çağrılır)."""
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self.broadcast(event, data))
-        except RuntimeError:
-            pass
+        """
+        Senkron context'ten broadcast başlat (REST endpoint'lerden çağrılır).
+
+        FastAPI sync endpoint'leri thread pool'da çalışır — bu thread'de
+        asyncio event loop yoktur. asyncio.run_coroutine_threadsafe() ile
+        ana event loop'a güvenle görev planlıyoruz.
+        """
+        if self._loop is None or self._loop.is_closed():
+            return
+        asyncio.run_coroutine_threadsafe(self.broadcast(event, data), self._loop)
 
 
 # Singleton instance
