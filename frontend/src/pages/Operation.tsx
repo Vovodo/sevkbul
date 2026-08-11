@@ -29,52 +29,84 @@ export default function OperationPage() {
   });
   const [isFullscreen, setIsFullscreen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const fsInputRef = useRef<HTMLInputElement>(null);
 
   const isScanning = phase === 'scanning' && shipments.length > 0;
 
+  const blurActiveInput = useCallback(() => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    inputRef.current?.blur();
+  }, []);
+
   const focusInput = useCallback(() => {
-    if (!isScanning) return;
-    setTimeout(() => {
-      const target = isFullscreen ? fsInputRef.current : inputRef.current;
-      target?.focus();
-    }, 30);
+    if (!isScanning || isFullscreen) return;
+    setTimeout(() => inputRef.current?.focus(), 30);
   }, [isScanning, isFullscreen]);
+
+  const lockLandscape = useCallback(async () => {
+    try {
+      const orientation = screen.orientation as ScreenOrientation & {
+        lock?: (type: 'landscape' | 'landscape-primary' | 'landscape-secondary') => Promise<void>;
+      };
+      if (orientation?.lock) {
+        await orientation.lock('landscape');
+      }
+    } catch {
+      // iOS / bazı tarayıcılarda desteklenmeyebilir
+    }
+  }, []);
+
+  const unlockOrientation = useCallback(() => {
+    try {
+      screen.orientation?.unlock();
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const exitFullscreen = useCallback(() => {
     setIsFullscreen(false);
+    unlockOrientation();
     if (document.fullscreenElement && document.exitFullscreen) {
       document.exitFullscreen().catch(() => {});
     }
-  }, []);
+  }, [unlockOrientation]);
 
-  const enterFullscreen = useCallback(() => {
+  const enterFullscreen = useCallback(async () => {
+    blurActiveInput();
     setIsFullscreen(true);
-    if (document.documentElement.requestFullscreen) {
-      document.documentElement.requestFullscreen().catch(() => {});
+    try {
+      if (document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen();
+      }
+      await lockLandscape();
+    } catch {
+      // Tam ekran / yön kilidi desteklenmese de overlay çalışır
     }
-  }, []);
+  }, [blurActiveInput, lockLandscape]);
 
   useEffect(() => {
     const onFullscreenChange = () => {
       if (!document.fullscreenElement) {
         setIsFullscreen(false);
+        unlockOrientation();
       }
     };
     document.addEventListener('fullscreenchange', onFullscreenChange);
     return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
-  }, []);
+  }, [unlockOrientation]);
 
   useEffect(() => {
     if (isFullscreen) {
       document.body.classList.add('fs-active');
-      setTimeout(() => fsInputRef.current?.focus(), 50);
+      blurActiveInput();
     } else {
       document.body.classList.remove('fs-active');
       focusInput();
     }
     return () => document.body.classList.remove('fs-active');
-  }, [isFullscreen, focusInput]);
+  }, [isFullscreen, focusInput, blurActiveInput]);
 
   useEffect(() => {
     initAudio();
@@ -551,6 +583,8 @@ export default function OperationPage() {
             <button
               type="button"
               className="op-result-fs-btn"
+              onMouseDown={e => e.preventDefault()}
+              onTouchStart={e => e.preventDefault()}
               onClick={enterFullscreen}
               title="Tam Ekran / Büyüteç Modu"
               aria-label="Bildirimi tam ekranda göster"
@@ -594,33 +628,9 @@ export default function OperationPage() {
 
       {isFullscreen && (
         <div className="fs-overlay" role="dialog" aria-modal="true" aria-label="Tam ekran okutma bildirimi">
-          <div className="fs-header">
-            <div className="fs-header-title">
-              <span className="fs-live-dot" aria-hidden>●</span>
-              <span>CANLI OKUTMA BİLDİRİMİ</span>
-              {shipments.length > 0 && (
-                <span className="fs-header-progress">
-                  {shipments[0].reference} ({shipments[0].scanned_quantity} / {shipments[0].requested_quantity})
-                </span>
-              )}
-            </div>
-            <button type="button" className="fs-close-btn" onClick={exitFullscreen}>
-              ✕ Tam Ekrandan Çık
-            </button>
-          </div>
-
-          <div className="fs-scan-input-bar">
-            <input
-              ref={fsInputRef}
-              className="op-scan-input fs-input"
-              value={scanValue}
-              onChange={e => setScanValue(e.target.value)}
-              onKeyDown={onKeyDown}
-              placeholder="Etiket okutun..."
-              autoFocus
-            />
-            <button type="button" className="op-btn primary" onClick={() => handleScan(scanValue)}>OKUT</button>
-          </div>
+          <button type="button" className="fs-close-btn" onClick={exitFullscreen}>
+            ✕ Tam Ekrandan Çık
+          </button>
 
           <div className="fs-card-container">
             {lastScan && resultStyle ? (
@@ -656,27 +666,12 @@ export default function OperationPage() {
               </div>
             ) : (
               <div className="fs-card waiting">
-                <div className="fs-card-icon">🔍</div>
+                <div className="fs-card-icon">⏳</div>
                 <div className="fs-card-result-text">SONUÇ BEKLENİYOR</div>
-                <div className="fs-card-sub">QR / etiket okutulduğunda burada büyük boyutta görüntülenecek</div>
+                <div className="fs-card-sub">Yeni okutma geldiğinde burada büyük boyutta görüntülenecek</div>
               </div>
             )}
           </div>
-
-          {recentScans.length > 0 && (
-            <div className="fs-recent-bar">
-              <span className="fs-recent-head">SON OKUTMALAR</span>
-              <div className="fs-recent-tags">
-                {recentScans.slice(0, 8).map((s, i) => (
-                  <span key={`${s.label}-${s.time}-${i}`} className={`fs-tag ${s.result === 'SEVKİYAT ÜRÜNÜ' ? 'ok' : 'err'}`}>
-                    {s.result === 'SEVKİYAT ÜRÜNÜ' ? '✓' : '✕'} {s.label}
-                    {s.reference ? ` · ${s.reference}` : ''}
-                    {s.quantity != null ? ` · ${s.quantity} adet` : ''}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>
