@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { api, ShipmentProgress, ScanResponse, ShipmentTarget, RecentScan, ScannedLabel } from '../api';
 import { playScanSound, getResultStyle, initAudio, ScanResultType } from '../audio';
 import SoundSettings from '../components/SoundSettings';
+import ManifestModal from '../components/ManifestModal';
 import { useLiveUpdates, WsMessage } from '../useLiveUpdates';
 
 type Phase = 'setup' | 'scanning';
@@ -9,6 +10,7 @@ type Phase = 'setup' | 'scanning';
 export default function OperationPage() {
   const [phase, setPhase] = useState<Phase>('setup');
   const [showSetup, setShowSetup] = useState(true);
+  const [showManifestModal, setShowManifestModal] = useState(false);
   const [stockLoaded, setStockLoaded] = useState(false);
   const [stockCount, setStockCount] = useState(0);
   const [targets, setTargets] = useState<ShipmentTarget[]>([]);
@@ -299,6 +301,16 @@ export default function OperationPage() {
         <h1>SEVKİYAT BUL</h1>
         {stockLoaded && <span className="op-badge ok">{stockCount.toLocaleString('tr-TR')} etiket yüklü</span>}
         <div className="op-header-actions">
+          {shipments.length > 0 && (
+            <button
+              type="button"
+              className="op-btn primary compact"
+              onClick={() => setShowManifestModal(true)}
+              style={{ fontWeight: 700 }}
+            >
+              📋 FİFO Liste / Çıktı
+            </button>
+          )}
           {isScanning && (
             <>
               <button type="button" className="op-btn secondary compact" onClick={() => setShowSetup(v => !v)}>
@@ -317,6 +329,8 @@ export default function OperationPage() {
           <SoundSettings />
         </div>
       </header>
+
+      <ManifestModal isOpen={showManifestModal} onClose={() => setShowManifestModal(false)} />
 
       {error && <div className="op-alert error">{error}</div>}
 

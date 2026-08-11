@@ -9,12 +9,15 @@ from app.schemas import (
     ShipmentFindResultSchema, ShipmentProgressSchema,
     ScanRequest, ScanResponseSchema, ScanLogSchema,
     ShipmentTargetImportResultSchema, RowErrorSchema, ScannedLabelSchema,
+    ShipmentManifestSchema,
 )
 from app.services.target_service import list_targets, add_target, clear_targets, find_shipments
 from app.services.shipment_excel_import import import_shipment_targets_excel
 from app.services.shipment_service import get_active_shipments, get_shipment_progress
 from app.services.scan_service import process_global_scan
-from app.services.operation_service import reset_active_shipments, get_scanned_labels, undo_scan
+from app.services.operation_service import (
+    reset_active_shipments, get_scanned_labels, undo_scan, get_shipment_manifest
+)
 from app.models import ScanLog, InventoryLabel
 from app.ws_manager import ws_manager
 
@@ -114,6 +117,12 @@ def reset_shipments(db: Session = Depends(get_db)):
 @router.get("/status", response_model=list[ShipmentProgressSchema])
 def shipment_status(db: Session = Depends(get_db)):
     return get_active_shipments(db)
+
+
+@router.get("/manifest", response_model=list[ShipmentManifestSchema])
+def shipment_manifest(db: Session = Depends(get_db)):
+    """Aktif ve tamamlanmış tüm sevkiyatlar için sistemin hesapladığı tam manifest bilgisini döner."""
+    return get_shipment_manifest(db)
 
 
 @router.get("/scans", response_model=list[ScanLogSchema])

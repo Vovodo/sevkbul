@@ -162,3 +162,28 @@ class ShipmentImportResultSchema(BaseModel):
     errors: list[RowErrorSchema]
     missing_columns: list[str]
     shipments: list[ShipmentImportRowSchema]
+
+
+class ShipmentManifestItemSchema(BaseModel):
+    label: str
+    reference: str
+    quantity: float
+    fifo_date: str
+    fifo_group_date: str
+    status: str
+    is_scanned: bool
+
+
+class ShipmentManifestSchema(BaseModel):
+    shipment_id: int
+    reference: str
+    requested_quantity: float
+    pool_quantity: float
+    scanned_quantity: float
+    remaining_quantity: float
+    progress_percent: float
+    hourly_fifo: bool
+    status: str
+    is_complete: bool
+    items: list[ShipmentManifestItemSchema]
+

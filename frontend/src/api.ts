@@ -83,6 +83,30 @@ export interface ScannedLabel {
   scanned_at: string | null;
 }
 
+export interface ShipmentManifestItem {
+  label: string;
+  reference: string;
+  quantity: number;
+  fifo_date: string;
+  fifo_group_date: string;
+  status: string;
+  is_scanned: boolean;
+}
+
+export interface ShipmentManifest {
+  shipment_id: number;
+  reference: string;
+  requested_quantity: number;
+  pool_quantity: number;
+  scanned_quantity: number;
+  remaining_quantity: number;
+  progress_percent: number;
+  hourly_fifo: boolean;
+  status: string;
+  is_complete: boolean;
+  items: ShipmentManifestItem[];
+}
+
 export const api = {
   healthCheck: () =>
     request<{ status: string; service: string; version: string; features: string[] }>('/api/health'),
@@ -131,6 +155,8 @@ export const api = {
     ),
 
   getShipmentStatus: () => request<ShipmentProgress[]>('/api/shipment/status'),
+
+  getManifest: () => request<ShipmentManifest[]>('/api/shipment/manifest'),
 
   scan: (label: string) =>
     request<ScanResponse>('/api/shipment/scan', {

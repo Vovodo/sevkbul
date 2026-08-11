@@ -112,3 +112,71 @@ def undo_scan(db: Session, shipment_id: int, label: str) -> dict:
             lookup_cache.unmark_scanned(shipment_id, label.strip())
 
     return get_shipment_progress(db, shipment_id)
+
+
+def get_shipment_manifest(db: Session) -> list[dict]:
+    """
+    Aktif ve tamamlanmış tüm sevkiyatlar için sistemin arka planda hesapladığı
+    tam FIFO havuzunu, etiket listesini ve okutma durumlarını döndürür.
+    """
+    shipments = (
+        db.query(Shipment)
+        .filter(Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]))
+        .order_by(Shipment.created_at.desc())
+        .all()
+    )
+
+    manifests = []
+    for s in shipments:
+        prog = get_shipment_progress(db, s.id)
+
+        # Havuzdaki tüm aday etiketler
+        sls = (
+            db.query(ShipmentLabel)
+            .options(joinedload(ShipmentLabel.inventory_label))
+            .filter(ShipmentLabel.shipment_id == s.id)
+            .all()
+        )
+
+        items = []
+        for sl in sls:
+            inv = sl.inventory_label
+            if not inv:
+                continue
+            is_scanned = sl.status == ShipmentLabelStatus.SCANNED
+            
+            use_hourly = getattr(s, "hourly_fifo", False)
+            group_fmt = inv.fifo_date.strftime("%d.%m.%Y %H:%M") if use_hourly else inv.fifo_date.strftime("%d.%m.%Y")
+
+            items.append({
+                "label": inv.label,
+                "reference": inv.reference,
+                "quantity": float(sl.allocated_quantity),
+                "fifo_date": inv.fifo_date.strftime("%d.%m.%Y %H:%M"),
+                "fifo_group_date": group_fmt,
+                "status": sl.status.value if hasattr(sl.status, "value") else str(sl.status),
+                "is_scanned": is_scanned,
+                "_fifo_sort_key": inv.fifo_date,
+            })
+
+        # Etiketleri FIFO tarihine (en eski en üstte) göre sırala
+        items.sort(key=lambda x: x["_fifo_sort_key"])
+        for item in items:
+            item.pop("_fifo_sort_key", None)
+
+        manifests.append({
+            "shipment_id": s.id,
+            "reference": s.reference,
+            "requested_quantity": prog["requested_quantity"],
+            "pool_quantity": prog["pool_quantity"],
+            "scanned_quantity": prog["scanned_quantity"],
+            "remaining_quantity": prog["remaining_quantity"],
+            "progress_percent": prog["progress_percent"],
+            "hourly_fifo": getattr(s, "hourly_fifo", False),
+            "status": prog["status"],
+            "is_complete": prog["is_complete"],
+            "items": items,
+        })
+
+    return manifests
+
