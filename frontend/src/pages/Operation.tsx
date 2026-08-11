@@ -27,13 +27,54 @@ export default function OperationPage() {
   const [hourlyFifo, setHourlyFifo] = useState<boolean>(() => {
     return localStorage.getItem('hourlyFifo') === 'true';
   });
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const fsInputRef = useRef<HTMLInputElement>(null);
 
   const isScanning = phase === 'scanning' && shipments.length > 0;
 
   const focusInput = useCallback(() => {
-    if (isScanning) setTimeout(() => inputRef.current?.focus(), 30);
-  }, [isScanning]);
+    if (!isScanning) return;
+    setTimeout(() => {
+      const target = isFullscreen ? fsInputRef.current : inputRef.current;
+      target?.focus();
+    }, 30);
+  }, [isScanning, isFullscreen]);
+
+  const exitFullscreen = useCallback(() => {
+    setIsFullscreen(false);
+    if (document.fullscreenElement && document.exitFullscreen) {
+      document.exitFullscreen().catch(() => {});
+    }
+  }, []);
+
+  const enterFullscreen = useCallback(() => {
+    setIsFullscreen(true);
+    if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+  }, []);
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      if (!document.fullscreenElement) {
+        setIsFullscreen(false);
+      }
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, []);
+
+  useEffect(() => {
+    if (isFullscreen) {
+      document.body.classList.add('fs-active');
+      setTimeout(() => fsInputRef.current?.focus(), 50);
+    } else {
+      document.body.classList.remove('fs-active');
+      focusInput();
+    }
+    return () => document.body.classList.remove('fs-active');
+  }, [isFullscreen, focusInput]);
 
   useEffect(() => {
     initAudio();
@@ -500,24 +541,39 @@ export default function OperationPage() {
               onKeyDown={onKeyDown}
               placeholder="Etiket okutun veya yazın..."
               autoFocus
+              tabIndex={isFullscreen ? -1 : 0}
+              aria-hidden={isFullscreen}
             />
             <button className="op-btn primary" onClick={() => handleScan(scanValue)}>OKUT</button>
           </div>
 
-          {lastScan && resultStyle ? (
-            <div className="op-result" style={{ background: resultStyle.bg }}>
-              <div className="op-result-icon">{resultStyle.icon}</div>
-              <div className="op-result-text">{lastScan.result}</div>
-              <div className="op-result-detail">
-                <div>Etiket: <strong>{lastScan.label}</strong></div>
-                {lastScan.reference && <div>Referans: {lastScan.reference}</div>}
-                {lastScan.quantity != null && <div>Miktar: {lastScan.quantity}</div>}
-                {lastScan.fifo_date && <div>FIFO: {lastScan.fifo_date}</div>}
+          <div className="op-result-wrap">
+            <button
+              type="button"
+              className="op-result-fs-btn"
+              onClick={enterFullscreen}
+              title="Tam Ekran / Büyüteç Modu"
+              aria-label="Bildirimi tam ekranda göster"
+            >
+              <span className="op-result-fs-icon" aria-hidden>🔍</span>
+              <span className="op-result-fs-icon-expand" aria-hidden>⛶</span>
+            </button>
+
+            {lastScan && resultStyle ? (
+              <div className="op-result" style={{ background: resultStyle.bg }}>
+                <div className="op-result-icon">{resultStyle.icon}</div>
+                <div className="op-result-text">{lastScan.result}</div>
+                <div className="op-result-detail">
+                  <div>Etiket: <strong>{lastScan.label}</strong></div>
+                  {lastScan.reference && <div>Referans: {lastScan.reference}</div>}
+                  {lastScan.quantity != null && <div>Miktar: {lastScan.quantity}</div>}
+                  {lastScan.fifo_date && <div>FIFO: {lastScan.fifo_date}</div>}
+                </div>
               </div>
-            </div>
-          ) : (
-            <div className="op-result waiting">SONUÇ BEKLENİYOR</div>
-          )}
+            ) : (
+              <div className="op-result waiting">SONUÇ BEKLENİYOR</div>
+            )}
+          </div>
 
           {recentScans.length > 0 && (
             <div className="op-recent">
@@ -534,6 +590,94 @@ export default function OperationPage() {
             </div>
           )}
         </section>
+      )}
+
+      {isFullscreen && (
+        <div className="fs-overlay" role="dialog" aria-modal="true" aria-label="Tam ekran okutma bildirimi">
+          <div className="fs-header">
+            <div className="fs-header-title">
+              <span className="fs-live-dot" aria-hidden>●</span>
+              <span>CANLI OKUTMA BİLDİRİMİ</span>
+              {shipments.length > 0 && (
+                <span className="fs-header-progress">
+                  {shipments[0].reference} ({shipments[0].scanned_quantity} / {shipments[0].requested_quantity})
+                </span>
+              )}
+            </div>
+            <button type="button" className="fs-close-btn" onClick={exitFullscreen}>
+              ✕ Tam Ekrandan Çık
+            </button>
+          </div>
+
+          <div className="fs-scan-input-bar">
+            <input
+              ref={fsInputRef}
+              className="op-scan-input fs-input"
+              value={scanValue}
+              onChange={e => setScanValue(e.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder="Etiket okutun..."
+              autoFocus
+            />
+            <button type="button" className="op-btn primary" onClick={() => handleScan(scanValue)}>OKUT</button>
+          </div>
+
+          <div className="fs-card-container">
+            {lastScan && resultStyle ? (
+              <div key={lastScan.label + lastScan.result} className="fs-card fs-card-flash" style={{ background: resultStyle.bg }}>
+                <div className="fs-card-icon">{resultStyle.icon}</div>
+                <div className="fs-card-result-text">{lastScan.result}</div>
+                <div className="fs-card-details">
+                  <div className="fs-card-label-block">
+                    <span className="fs-card-label-title">ETİKET NO</span>
+                    <strong className="fs-card-label-val">{lastScan.label}</strong>
+                  </div>
+                  <div className="fs-card-meta-grid">
+                    {lastScan.reference && (
+                      <div className="fs-meta-item">
+                        <span>REFERANS</span>
+                        <strong>{lastScan.reference}</strong>
+                      </div>
+                    )}
+                    {lastScan.quantity != null && (
+                      <div className="fs-meta-item">
+                        <span>MİKTAR</span>
+                        <strong>{lastScan.quantity} ADET</strong>
+                      </div>
+                    )}
+                    {lastScan.fifo_date && (
+                      <div className="fs-meta-item">
+                        <span>FIFO TARİHİ</span>
+                        <strong>{lastScan.fifo_date}</strong>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="fs-card waiting">
+                <div className="fs-card-icon">🔍</div>
+                <div className="fs-card-result-text">SONUÇ BEKLENİYOR</div>
+                <div className="fs-card-sub">QR / etiket okutulduğunda burada büyük boyutta görüntülenecek</div>
+              </div>
+            )}
+          </div>
+
+          {recentScans.length > 0 && (
+            <div className="fs-recent-bar">
+              <span className="fs-recent-head">SON OKUTMALAR</span>
+              <div className="fs-recent-tags">
+                {recentScans.slice(0, 8).map((s, i) => (
+                  <span key={`${s.label}-${s.time}-${i}`} className={`fs-tag ${s.result === 'SEVKİYAT ÜRÜNÜ' ? 'ok' : 'err'}`}>
+                    {s.result === 'SEVKİYAT ÜRÜNÜ' ? '✓' : '✕'} {s.label}
+                    {s.reference ? ` · ${s.reference}` : ''}
+                    {s.quantity != null ? ` · ${s.quantity} adet` : ''}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
