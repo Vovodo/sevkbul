@@ -102,37 +102,42 @@ def check_label_in_shipment_pool(db: Session, label: str) -> PoolCheck:
             )
 
         # Kontenjan hesabı (Group Quota Check)
+        use_hourly = getattr(shipment, "hourly_fifo", False)
+        def get_g_key(dt):
+            return dt.replace(second=0, microsecond=0) if use_hourly else dt.date()
+
         group_items_by_date = {}
         for sl in shipment.shipment_labels:
             if not sl.inventory_label:
                 continue
-            g_date = sl.inventory_label.fifo_date.date()
-            if g_date not in group_items_by_date:
-                group_items_by_date[g_date] = []
-            group_items_by_date[g_date].append(sl)
+            g_key = get_g_key(sl.inventory_label.fifo_date)
+            if g_key not in group_items_by_date:
+                group_items_by_date[g_key] = []
+            group_items_by_date[g_key].append(sl)
 
-        sorted_g_dates = sorted(group_items_by_date.keys())
+        sorted_g_keys = sorted(group_items_by_date.keys())
         quota_map = {}
         cum_allocated = 0.0
         target = float(shipment.requested_quantity)
 
-        for g_date in sorted_g_dates:
-            sl_list = group_items_by_date[g_date]
+        for g_key in sorted_g_keys:
+            sl_list = group_items_by_date[g_key]
             # Grubun toplam stoğu
             group_stock = sum(float(sl.inventory_label.quantity) for sl in sl_list)
             needed = max(0.0, target - cum_allocated)
             g_quota = min(needed, group_stock)
-            quota_map[g_date] = g_quota
+            quota_map[g_key] = g_quota
             cum_allocated += g_quota
 
+        inv_g_key = get_g_key(inv.fifo_date)
         scanned_in_group = sum(
             float(sl.allocated_quantity)
             for sl in shipment.shipment_labels
-            if sl.inventory_label and sl.inventory_label.fifo_date.date() == inv.fifo_date.date() and sl.status == ShipmentLabelStatus.SCANNED
+            if sl.inventory_label and get_g_key(sl.inventory_label.fifo_date) == inv_g_key and sl.status == ShipmentLabelStatus.SCANNED
         )
 
         inv_qty = float(inv.quantity)
-        allowed_quota = quota_map.get(inv.fifo_date.date(), 0.0)
+        allowed_quota = quota_map.get(inv_g_key, 0.0)
 
         if scanned_in_group + inv_qty > allowed_quota:
             # Grubun kontenjanı doldu!

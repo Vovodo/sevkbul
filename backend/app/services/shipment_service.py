@@ -29,6 +29,7 @@ def create_shipment_from_reference(
     db: Session,
     reference: str,
     requested_quantity: Decimal,
+    hourly_fifo: bool = False,
 ) -> ShipmentCreateResult:
     labels = (
         db.query(InventoryLabel)
@@ -51,7 +52,7 @@ def create_shipment_from_reference(
         for l in labels
     ]
 
-    fifo_result = calculate_fifo_groups(items, requested_quantity)
+    fifo_result = calculate_fifo_groups(items, requested_quantity, hourly_fifo=hourly_fifo)
 
     if not fifo_result.allocations:
         raise ValueError(f"Yeterli stok yok: {reference}")
@@ -60,6 +61,7 @@ def create_shipment_from_reference(
         reference=reference,
         requested_quantity=requested_quantity,
         status=ShipmentStatus.ACTIVE,
+        hourly_fifo=hourly_fifo,
     )
     db.add(shipment)
     db.flush()
@@ -94,8 +96,13 @@ def create_shipment_from_reference(
     )
 
 
-def create_shipment(db: Session, reference: str, requested_quantity: Decimal) -> ShipmentCreateResult:
-    return create_shipment_from_reference(db, reference, requested_quantity)
+def create_shipment(
+    db: Session,
+    reference: str,
+    requested_quantity: Decimal,
+    hourly_fifo: bool = False,
+) -> ShipmentCreateResult:
+    return create_shipment_from_reference(db, reference, requested_quantity, hourly_fifo=hourly_fifo)
 
 
 def get_shipment_progress(db: Session, shipment_id: int) -> dict:

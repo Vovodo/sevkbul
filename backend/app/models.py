@@ -2,7 +2,7 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import (
-    Column, Integer, String, DateTime, ForeignKey, Numeric, Index, Enum as SAEnum
+    Column, Integer, String, DateTime, ForeignKey, Numeric, Index, Boolean, Enum as SAEnum
 )
 from sqlalchemy.orm import relationship
 
@@ -49,6 +49,7 @@ class Shipment(Base):
     reference = Column(String(200), nullable=False, index=True)
     requested_quantity = Column(Numeric(12, 2), nullable=False)
     status = Column(SAEnum(ShipmentStatus), default=ShipmentStatus.ACTIVE, index=True)
+    hourly_fifo = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
 

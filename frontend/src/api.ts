@@ -124,9 +124,9 @@ export const api = {
     return res.json() as Promise<{ targets: ShipmentTarget[]; successful: number }>;
   },
 
-  findShipments: () =>
+  findShipments: (hourlyFifo: boolean = false) =>
     request<{ shipments: ShipmentProgress[]; errors: { reference: string; error: string }[] }>(
-      '/api/shipment/find',
+      `/api/shipment/find${hourlyFifo ? '?hourly_fifo=true' : ''}`,
       { method: 'POST' }
     ),
 

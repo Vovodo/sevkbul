@@ -21,7 +21,7 @@ class FifoAllocation:
     total_quantity: Decimal
     allocated_quantity: Decimal
     fifo_date: datetime
-    fifo_group_date: date
+    fifo_group_date: date | datetime
 
 
 @dataclass
@@ -29,7 +29,7 @@ class FifoGroupResult:
     allocations: list[FifoAllocation]
     remaining_unfulfilled: Decimal
     pool_quantity: Decimal
-    included_group_dates: list[date]
+    included_group_dates: list[date | datetime]
 
 
 def fifo_calendar_day(dt: datetime) -> date:
@@ -37,14 +37,22 @@ def fifo_calendar_day(dt: datetime) -> date:
     return dt.date()
 
 
+def fifo_datetime_group(dt: datetime) -> datetime:
+    """Dakika hassasiyetinde FIFO grubu (saniye ve mikrosaniye sıfırlanır)."""
+    return dt.replace(second=0, microsecond=0)
+
+
 def calculate_fifo_groups(
     items: list[InventoryItem],
     requested_quantity: Decimal,
+    hourly_fifo: bool = False,
 ) -> FifoGroupResult:
     """
     FIFO Tarih Grubu & Kontenjan Mantığı:
-    1. Etiketler fifo_date sırasına göre takvim günlerine (FIFO gruplarına) ayrılır.
-    2. En eski günden başlanarak hedef miktara (requested_quantity) ulaşana kadar kontenjan tahsis edilir.
+    1. Etiketler fifo_date sırasına göre takvim günlerine veya saatlerine (FIFO gruplarına) ayrılır.
+       - hourly_fifo=False: Gün bazlı gruplama (YYYY-MM-DD)
+       - hourly_fifo=True: Saat/Dakika bazlı gruplama (YYYY-MM-DD HH:MM)
+    2. En eski gruptan başlanarak hedef miktara (requested_quantity) ulaşana kadar kontenjan tahsis edilir.
     3. Tahsis edilen FIFO grubundaki TÜM etiketler aday olarak havuza (ShipmentLabel) eklenir.
     4. Okutma sırasında o grubun tahsisli kontenjanı dolana kadar bu gruptaki HANGİ etiket okutulursa okutulsun KABUL edilir.
     5. Kontenjan dolduğu anda aynı gruptaki diğer etiketler REJECT edilir.
@@ -57,27 +65,27 @@ def calculate_fifo_groups(
             included_group_dates=[],
         )
 
-    grouped: dict[date, list[InventoryItem]] = defaultdict(list)
+    grouped: dict[date | datetime, list[InventoryItem]] = defaultdict(list)
     for item in sorted(items, key=lambda x: x.fifo_date):
-        g_date = fifo_calendar_day(item.fifo_date)
-        grouped[g_date].append(item)
+        g_key = fifo_datetime_group(item.fifo_date) if hourly_fifo else fifo_calendar_day(item.fifo_date)
+        grouped[g_key].append(item)
 
-    sorted_dates = sorted(grouped.keys())
+    sorted_keys = sorted(grouped.keys())
 
     allocations: list[FifoAllocation] = []
-    included_dates_list: list[date] = []
+    included_dates_list: list[date | datetime] = []
     cumulative = Decimal(0)
 
-    for g_date in sorted_dates:
+    for g_key in sorted_keys:
         if cumulative >= requested_quantity:
             break
 
-        group_items = grouped[g_date]
+        group_items = grouped[g_key]
         group_total_stock = sum(i.quantity for i in group_items)
         needed = requested_quantity - cumulative
         group_allocated_quota = min(needed, group_total_stock)
 
-        included_dates_list.append(g_date)
+        included_dates_list.append(g_key)
 
         for item in group_items:
             allocations.append(FifoAllocation(
@@ -87,7 +95,7 @@ def calculate_fifo_groups(
                 total_quantity=item.quantity,
                 allocated_quantity=item.quantity,
                 fifo_date=item.fifo_date,
-                fifo_group_date=g_date,
+                fifo_group_date=g_key,
             ))
 
         cumulative += group_allocated_quota

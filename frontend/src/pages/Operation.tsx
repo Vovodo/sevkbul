@@ -22,6 +22,9 @@ export default function OperationPage() {
   const [scannedMap, setScannedMap] = useState<Record<number, ScannedLabel[]>>({});
   const [loading, setLoading] = useState('');
   const [error, setError] = useState('');
+  const [hourlyFifo, setHourlyFifo] = useState<boolean>(() => {
+    return localStorage.getItem('hourlyFifo') === 'true';
+  });
   const inputRef = useRef<HTMLInputElement>(null);
 
   const isScanning = phase === 'scanning' && shipments.length > 0;
@@ -172,7 +175,7 @@ export default function OperationPage() {
     setLoading('find');
     setError('');
     try {
-      const r = await api.findShipments();
+      const r = await api.findShipments(hourlyFifo);
       setShipments(r.shipments);
       setTargets([]);
       if (r.shipments.length > 0) {
@@ -366,6 +369,37 @@ export default function OperationPage() {
               ))}
             </div>
           )}
+
+          <div style={{ marginTop: '1rem', marginBottom: '0.75rem', display: 'flex', justifyContent: 'center' }}>
+            <button
+              type="button"
+              className={`op-btn compact ${hourlyFifo ? 'primary' : 'secondary'}`}
+              onClick={() => setHourlyFifo(prev => {
+                const next = !prev;
+                localStorage.setItem('hourlyFifo', String(next));
+                return next;
+              })}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                padding: '0.5rem 1rem',
+                fontSize: '0.85rem',
+                fontWeight: 600,
+                borderRadius: '8px',
+                border: hourlyFifo ? '1px solid #3b82f6' : '1px solid #374151',
+                background: hourlyFifo ? 'rgba(59, 130, 246, 0.15)' : 'rgba(31, 41, 55, 0.5)',
+                color: hourlyFifo ? '#60a5fa' : '#9ca3af',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+              }}
+            >
+              <span>⏰ Saat Filtresi (FİFO Saat Önceliği):</span>
+              <strong style={{ color: hourlyFifo ? '#3b82f6' : '#6b7280' }}>
+                {hourlyFifo ? '⚡ AÇIK (Saat+Tarih Birebir)' : '📅 KAPALI (Sadece Gün/Tarih)'}
+              </strong>
+            </button>
+          </div>
 
           <button
             className="op-btn primary large"

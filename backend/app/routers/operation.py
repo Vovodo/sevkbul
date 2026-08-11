@@ -88,9 +88,9 @@ async def import_targets_excel(
 
 
 @router.post("/find", response_model=ShipmentFindResultSchema)
-def find_shipment_pools(db: Session = Depends(get_db)):
+def find_shipment_pools(hourly_fifo: bool = False, db: Session = Depends(get_db)):
     try:
-        result = find_shipments(db)
+        result = find_shipments(db, hourly_fifo=hourly_fifo)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

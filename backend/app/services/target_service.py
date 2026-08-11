@@ -42,7 +42,7 @@ def clear_targets(db: Session):
     db.commit()
 
 
-def find_shipments(db: Session) -> list[dict]:
+def find_shipments(db: Session, hourly_fifo: bool = False) -> list[dict]:
     """Tüm hedefler için FIFO havuzlarını oluştur."""
     targets = db.query(ShipmentTarget).order_by(ShipmentTarget.id).all()
     if not targets:
@@ -63,7 +63,7 @@ def find_shipments(db: Session) -> list[dict]:
 
     for t in targets:
         try:
-            created = create_shipment_from_reference(db, t.reference, t.target_quantity)
+            created = create_shipment_from_reference(db, t.reference, t.target_quantity, hourly_fifo=hourly_fifo)
             results.append({
                 "shipment_id": created.shipment_id,
                 "reference": created.reference,

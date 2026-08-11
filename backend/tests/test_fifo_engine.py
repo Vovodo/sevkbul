@@ -87,3 +87,17 @@ class TestFifoGroupEngine:
         result = calculate_fifo_groups(items, Decimal("90"))
         dates = [a.fifo_group_date for a in result.allocations]
         assert dates == sorted(dates)
+
+    def test_hourly_fifo_grouping(self):
+        """Saat filtresi AÇIK iken farklı saatler ayrı gruptur."""
+        items = [
+            make_item("H01", 30, 1, hour=1),
+            make_item("H02", 30, 1, hour=2),
+            make_item("H03", 30, 1, hour=3),
+        ]
+        result = calculate_fifo_groups(items, Decimal("30"), hourly_fifo=True)
+        # Sadece en eski saat (hour=1) grubu alınmalı
+        labels = {a.label for a in result.allocations}
+        assert labels == {"H01"}
+        assert len(result.included_group_dates) == 1
+        assert result.included_group_dates[0] == datetime(2026, 7, 1, 1, 0)
