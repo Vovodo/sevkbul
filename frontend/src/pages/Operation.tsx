@@ -32,17 +32,10 @@ export default function OperationPage() {
 
   const isScanning = phase === 'scanning' && shipments.length > 0;
 
-  const blurActiveInput = useCallback(() => {
-    if (document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
-    }
-    inputRef.current?.blur();
-  }, []);
-
-  const focusInput = useCallback(() => {
-    if (!isScanning || isFullscreen) return;
-    setTimeout(() => inputRef.current?.focus(), 30);
-  }, [isScanning, isFullscreen]);
+  const focusScanInput = useCallback(() => {
+    if (!isScanning) return;
+    setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 30);
+  }, [isScanning]);
 
   const lockLandscape = useCallback(async () => {
     try {
@@ -74,7 +67,6 @@ export default function OperationPage() {
   }, [unlockOrientation]);
 
   const enterFullscreen = useCallback(async () => {
-    blurActiveInput();
     setIsFullscreen(true);
     try {
       if (document.documentElement.requestFullscreen) {
@@ -84,7 +76,8 @@ export default function OperationPage() {
     } catch {
       // Tam ekran / yön kilidi desteklenmese de overlay çalışır
     }
-  }, [blurActiveInput, lockLandscape]);
+    focusScanInput();
+  }, [lockLandscape, focusScanInput]);
 
   useEffect(() => {
     const onFullscreenChange = () => {
@@ -100,13 +93,13 @@ export default function OperationPage() {
   useEffect(() => {
     if (isFullscreen) {
       document.body.classList.add('fs-active');
-      blurActiveInput();
+      focusScanInput();
     } else {
       document.body.classList.remove('fs-active');
-      focusInput();
+      focusScanInput();
     }
     return () => document.body.classList.remove('fs-active');
-  }, [isFullscreen, focusInput, blurActiveInput]);
+  }, [isFullscreen, focusScanInput]);
 
   useEffect(() => {
     initAudio();
@@ -133,7 +126,7 @@ export default function OperationPage() {
     }).catch(() => {});
   }, []);
 
-  useEffect(() => { focusInput(); }, [isScanning, focusInput]);
+  useEffect(() => { focusScanInput(); }, [isScanning, focusScanInput]);
 
   // ─── Gerçek Zamanlı Canlı Güncelleme (WebSocket) ───
   const handleWsMessage = useCallback((msg: WsMessage) => {
@@ -349,9 +342,9 @@ export default function OperationPage() {
       setError(e instanceof Error ? e.message : 'Okutma hatası');
     } finally {
       setScanValue('');
-      focusInput();
+      focusScanInput();
     }
-  }, [focusInput, expandedId]);
+  }, [focusScanInput, expandedId]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -573,8 +566,6 @@ export default function OperationPage() {
               onKeyDown={onKeyDown}
               placeholder="Etiket okutun veya yazın..."
               autoFocus
-              tabIndex={isFullscreen ? -1 : 0}
-              aria-hidden={isFullscreen}
             />
             <button className="op-btn primary" onClick={() => handleScan(scanValue)}>OKUT</button>
           </div>
