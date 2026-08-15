@@ -371,57 +371,57 @@ function playExceededSound(output: AudioNode, t: number) {
 
 const EXCEEDED_DURATION = 0.5;
 
-/* ─── SEVKİYAT TAMAMLANDI BAŞARI SESİ (3.5 SANİYE — ZAFER MELODİSİ) ─── */
+/* ─── SEVKİYAT TAMAMLANDI: MINECRAFT LEVEL UP SESİ ─── */
 
 /**
- * Tamamlanma Zafer Melodisi:
- * Majör akorlarla yükselen 3.5 saniyelik hoş, sıcak melodi.
- * Başarı hissini pekiştiren shimmer harmonikler ve derin bas desteği.
- * İnsan kulağının "bir şey başardım" hissi yaşamasını hedefler.
+ * Otantik Minecraft Level Up Ses Efekti:
+ * Hızla yükselen 12 notalı arpej (Bb4 -> Db7) + retro çan/arp tınısı + kristal parıltılı bitiş akoru.
+ * Duyulduğu an anında tanınan ve yüksek dopamin hissi veren efsanevi Minecraft Level Up efekti.
  */
-function playCompletionCelebration(output: AudioNode, t: number) {
-  // ── Faz 1: Derin açılış (0.0 – 0.5s) ──
-  // Göğüs dolduran bas
-  playTone(output, 65, t, 0.5, 'sine', 0.7, 0.01);
-  playTone(output, 130, t, 0.4, 'triangle', 0.3, 0.01);
-  
-  // ── Faz 2: Yükselen melodi (0.2 – 2.0s) ──
-  // C5 → E5 → G5 → C6 → E6 majör arpej
-  const melodyNotes = [
-    { freq: 523.25, start: 0.15, dur: 0.45 },  // C5
-    { freq: 659.25, start: 0.40, dur: 0.45 },  // E5
-    { freq: 783.99, start: 0.65, dur: 0.45 },  // G5
-    { freq: 1046.50, start: 0.90, dur: 0.55 }, // C6 (doruk)
-    { freq: 1318.51, start: 1.20, dur: 0.50 }, // E6 (parıltı)
+function playMinecraftLevelUp(output: AudioNode, t: number) {
+  // Minecraft Level Up notaları (Hz)
+  const mcNotes = [
+    466.16, // Bb4 (0.00s)
+    554.37, // Db5 (0.05s)
+    622.25, // Eb5 (0.10s)
+    739.99, // Gb5 (0.15s)
+    830.61, // Ab5 (0.20s)
+    932.33, // Bb5 (0.25s)
+    1108.73, // Db6 (0.30s)
+    1244.51, // Eb6 (0.35s)
+    1479.98, // Gb6 (0.40s)
+    1661.22, // Ab6 (0.45s)
+    1864.66, // Bb6 (0.50s)
+    2217.46, // Db7 (0.55s - Doruk)
   ];
 
-  melodyNotes.forEach(n => {
-    // Ana nota (sıcak sine)
-    playTone(output, n.freq, t + n.start, n.dur, 'sine', 0.75, 0.008);
-    // Oktav harmonik (parıltı)
-    playTone(output, n.freq * 2, t + n.start + 0.01, n.dur * 0.7, 'triangle', 0.2, 0.01);
-    // Beşli harmonik (zenginlik)
-    playTone(output, n.freq * 1.5, t + n.start + 0.005, n.dur * 0.5, 'sine', 0.12, 0.015);
+  // Hızlı yükselen basamaklar
+  mcNotes.forEach((freq, i) => {
+    const noteStart = t + i * 0.048;
+    const isHigh = i >= 8;
+    const dur = isHigh ? 0.35 : 0.18;
+    const peak = isHigh ? 0.85 : 0.7;
+
+    // Ana çan/arp notası (Triangle + Sine karışımı - Minecraft tınısı)
+    playTone(output, freq, noteStart, dur, 'triangle', peak, 0.002);
+    playTone(output, freq, noteStart + 0.001, dur, 'sine', peak * 0.7, 0.002);
+    // Retro kare dalga vuruşu (Minecraft ses motorunun karakteristik tıkırtısı)
+    playTone(output, freq * 0.5, noteStart, 0.04, 'square', 0.15, 0.001);
   });
 
-  // ── Faz 3: Zafer akor pad (1.5 – 3.2s) ──
-  // Majör akor: C6 + E6 + G6 birlikte süzülen pad
-  const chordStart = t + 1.55;
-  playTone(output, 1046.50, chordStart, 1.6, 'sine', 0.55, 0.02);    // C6
-  playTone(output, 1318.51, chordStart, 1.6, 'sine', 0.45, 0.02);    // E6
-  playTone(output, 1567.98, chordStart, 1.6, 'triangle', 0.35, 0.02); // G6
+  // Doruk noktasında kristal parıltılı çınlama akoru (Db6 + F6 + Ab6 + Db7)
+  const chordStart = t + 0.56;
+  playTone(output, 1108.73, chordStart, 0.9, 'triangle', 0.5, 0.003); // Db6
+  playTone(output, 1396.91, chordStart + 0.01, 0.95, 'sine', 0.45, 0.003); // F6
+  playTone(output, 1661.22, chordStart + 0.02, 1.0, 'sine', 0.5, 0.003); // Ab6
+  playTone(output, 2217.46, chordStart + 0.03, 1.1, 'sine', 0.6, 0.003); // Db7
+  playTone(output, 4434.92, chordStart + 0.04, 0.6, 'sine', 0.25, 0.003); // Kristal Shimmer
 
-  // Shimmer harmonikler (kristal parıltı efekti)
-  playTone(output, 2093.00, chordStart + 0.1, 1.2, 'sine', 0.15, 0.03);
-  playTone(output, 2637.02, chordStart + 0.15, 1.0, 'sine', 0.10, 0.04);
-
-  // ── Faz 4: Final kapanış (2.8 – 3.5s) ──
-  // Yumuşak alçalan bas dolgu
-  playTone(output, 130, t + 2.5, 1.0, 'sine', 0.4, 0.02);
-  playTone(output, 65, t + 2.8, 0.7, 'sine', 0.3, 0.03);
+  // Sıcak bas alt dolgu
+  playTone(output, 138.59, chordStart, 0.8, 'sine', 0.35, 0.01); // Db3
 }
 
-const COMPLETION_DURATION = 3.5;
+const COMPLETION_DURATION = 1.8;
 
 export function warmupAudioEngine() {
   getContext();
@@ -459,7 +459,7 @@ export function playResultSound(
   } else if (category === 'completion') {
     const t = getContext().currentTime;
     const output = createSuccessChain(s, t, t + COMPLETION_DURATION);
-    playCompletionCelebration(output, t);
+    playMinecraftLevelUp(output, t);
   } else {
     playFailurePreset(s.failureSound, s);
   }

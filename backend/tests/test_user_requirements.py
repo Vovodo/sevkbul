@@ -139,7 +139,10 @@ class TestUserScenarios:
         assert status_after_reload.json()[0]["is_complete"] is True
 
         rescan_b_after_reload = c.post("/api/shipment/scan", json={"label": "ETIKET-B"})
-        assert rescan_b_after_reload.json()["result"] == "ZATEN OKUTULDU"
+        assert rescan_b_after_reload.json()["result"] == "MİKTAR AŞILDI"
+
+        rescan_a_after_reload = c.post("/api/shipment/scan", json={"label": "ETIKET-A"})
+        assert rescan_a_after_reload.json()["result"] == "ZATEN OKUTULDU"
 
     def test_multiple_shipments_isolated_pools(self, client):
         c, _ = client

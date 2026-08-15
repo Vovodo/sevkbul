@@ -72,6 +72,17 @@ def process_global_scan(db: Session, scanned_value: str) -> ScanResponse:
             already_scanned=True,
         )
 
+    if check.result == PoolCheckResult.QUANTITY_EXCEEDED:
+        sid = check.shipment.id if check.shipment else None
+        log_scan_check(label, inv.id if inv else None, fifo_str, False, "REJECT (QUANTITY_EXCEEDED)")
+        _log_scan(db, sid, actual_label, inv.id if inv else None, ScanResult.QUANTITY_EXCEEDED)
+        return _build_response(
+            ScanResult.QUANTITY_EXCEEDED.value, actual_label, sid, db,
+            reference=inv.reference if inv else None,
+            quantity=float(inv.quantity) if inv else None,
+            fifo_date=fifo_str if inv else None,
+        )
+
     if check.result == PoolCheckResult.IN_POOL and check.shipment and check.shipment_label:
         log_scan_check(label, inv.id, fifo_str, True, "ACCEPT (IN_POOL)")
         return _accept_scan(db, check.shipment.id, actual_label, inv, check.shipment_label)
