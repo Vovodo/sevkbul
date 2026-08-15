@@ -84,3 +84,40 @@ def get_inventory_stats(db: Session = Depends(get_db)):
     total = db.query(func.count(InventoryLabel.id)).scalar() or 0
     refs = db.query(func.count(func.distinct(InventoryLabel.reference))).scalar() or 0
     return InventoryStatsSchema(total_labels=total, total_references=refs)
+
+
+@router.get("/debug/reference/{reference}")
+def debug_reference_labels(reference: str, db: Session = Depends(get_db)):
+    """
+    Tanılama: Bir referans için DB'deki TÜM etiketleri FIFO tarih sırasıyla listeler.
+    Bu, FIFO havuz seçiminin doğruluğunu doğrulamak için kullanılır.
+    """
+    labels = (
+        db.query(InventoryLabel)
+        .filter(InventoryLabel.reference == reference)
+        .order_by(InventoryLabel.fifo_date.asc())
+        .all()
+    )
+
+    items = []
+    cumulative = 0.0
+    for idx, l in enumerate(labels, 1):
+        qty = float(l.quantity)
+        cumulative += qty
+        items.append({
+            "sira": idx,
+            "label": l.label,
+            "reference": l.reference,
+            "quantity": qty,
+            "fifo_date": l.fifo_date.strftime("%d.%m.%Y %H:%M:%S"),
+            "fifo_date_raw": l.fifo_date.isoformat(),
+            "cumulative_qty": cumulative,
+        })
+
+    return {
+        "reference": reference,
+        "total_labels": len(items),
+        "total_quantity": cumulative,
+        "items": items,
+    }
+
