@@ -9,14 +9,54 @@ from app.services.shipment_service import get_shipment_progress
 
 
 def reset_active_shipments(db: Session) -> int:
-    """Aktif ve tamamlanmış tüm sevkiyatları iptal et ve cache'i temizle."""
-    active = db.query(Shipment).filter(Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED])).all()
+    """Aktif ve tamamlanmış tüm sevkiyatları SİL ve DB'yi temizle (VPS depolama şişmesin)."""
+    from app.models import ShipmentTarget
+
+    active = db.query(Shipment).filter(
+        Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED])
+    ).all()
     count = len(active)
-    for s in active:
-        s.status = ShipmentStatus.CANCELLED
-        lookup_cache.unload_shipment(s.id)
+    shipment_ids = [s.id for s in active]
+
+    if shipment_ids:
+        # 1. Sevkiyatlara bağlı etiketleri sil
+        db.query(ShipmentLabel).filter(
+            ShipmentLabel.shipment_id.in_(shipment_ids)
+        ).delete(synchronize_session=False)
+
+        # 2. Sevkiyatlara bağlı scan loglarını sil
+        db.query(ScanLog).filter(
+            ScanLog.shipment_id.in_(shipment_ids)
+        ).delete(synchronize_session=False)
+
+        # 3. Sevkiyat kayıtlarını sil
+        db.query(Shipment).filter(
+            Shipment.id.in_(shipment_ids)
+        ).delete(synchronize_session=False)
+
+    # 4. Sevkiyata bağlı olmayan orphan scan loglarını da sil
+    db.query(ScanLog).filter(
+        ScanLog.shipment_id.is_(None)
+    ).delete(synchronize_session=False)
+
+    # 5. Hedef listesini temizle
+    db.query(ShipmentTarget).delete(synchronize_session=False)
+
     db.commit()
+
+    # 6. Cache'i tamamen temizle
+    for sid in shipment_ids:
+        lookup_cache.unload_shipment(sid)
     lookup_cache.rebuild_global_index()
+
+    # 7. SQLite VACUUM — disk alanını geri kazan
+    try:
+        raw_conn = db.bind.raw_connection()
+        raw_conn.execute("VACUUM")
+        raw_conn.close()
+    except Exception:
+        pass  # PostgreSQL veya farklı DB'lerde hata yutulur
+
     return count
 
 

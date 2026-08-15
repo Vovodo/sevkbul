@@ -1,0 +1,7 @@
+{
+  "plugins": {
+    "netlify-skills": {
+      "enabled": true
+    }
+  }
+}
