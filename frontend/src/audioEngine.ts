@@ -352,6 +352,77 @@ function playFailurePreset(id: FailureSoundId, settings: AudioSettings) {
   }
 }
 
+
+/* ─── MİKTAR AŞILDI İKAZ SESİ (Turuncu Alarm — SEVKİYAT DOLU) ─── */
+
+/**
+ * MİKTAR AŞILDI: Keskin uyarı - çift darbe + alçalan sweep
+ * Hata sesinden farklı, daha "dur" diyen otoriter bir ton
+ */
+function playExceededSound(output: AudioNode, t: number) {
+  // Çift sert kısa darbe
+  playTone(output, 1800, t, 0.06, 'square', 0.95, 0.001);
+  playTone(output, 1800, t + 0.08, 0.06, 'square', 0.95, 0.001);
+  // Alçalan uyarı sweep
+  playSweep(output, 1200, 300, t + 0.16, 0.25, 'sawtooth', 0.8);
+  // Derin bas vuruş
+  playThump(output, t + 0.16, 60, 0.2, 0.9);
+}
+
+const EXCEEDED_DURATION = 0.5;
+
+/* ─── SEVKİYAT TAMAMLANDI BAŞARI SESİ (3.5 SANİYE — ZAFER MELODİSİ) ─── */
+
+/**
+ * Tamamlanma Zafer Melodisi:
+ * Majör akorlarla yükselen 3.5 saniyelik hoş, sıcak melodi.
+ * Başarı hissini pekiştiren shimmer harmonikler ve derin bas desteği.
+ * İnsan kulağının "bir şey başardım" hissi yaşamasını hedefler.
+ */
+function playCompletionCelebration(output: AudioNode, t: number) {
+  // ── Faz 1: Derin açılış (0.0 – 0.5s) ──
+  // Göğüs dolduran bas
+  playTone(output, 65, t, 0.5, 'sine', 0.7, 0.01);
+  playTone(output, 130, t, 0.4, 'triangle', 0.3, 0.01);
+  
+  // ── Faz 2: Yükselen melodi (0.2 – 2.0s) ──
+  // C5 → E5 → G5 → C6 → E6 majör arpej
+  const melodyNotes = [
+    { freq: 523.25, start: 0.15, dur: 0.45 },  // C5
+    { freq: 659.25, start: 0.40, dur: 0.45 },  // E5
+    { freq: 783.99, start: 0.65, dur: 0.45 },  // G5
+    { freq: 1046.50, start: 0.90, dur: 0.55 }, // C6 (doruk)
+    { freq: 1318.51, start: 1.20, dur: 0.50 }, // E6 (parıltı)
+  ];
+
+  melodyNotes.forEach(n => {
+    // Ana nota (sıcak sine)
+    playTone(output, n.freq, t + n.start, n.dur, 'sine', 0.75, 0.008);
+    // Oktav harmonik (parıltı)
+    playTone(output, n.freq * 2, t + n.start + 0.01, n.dur * 0.7, 'triangle', 0.2, 0.01);
+    // Beşli harmonik (zenginlik)
+    playTone(output, n.freq * 1.5, t + n.start + 0.005, n.dur * 0.5, 'sine', 0.12, 0.015);
+  });
+
+  // ── Faz 3: Zafer akor pad (1.5 – 3.2s) ──
+  // Majör akor: C6 + E6 + G6 birlikte süzülen pad
+  const chordStart = t + 1.55;
+  playTone(output, 1046.50, chordStart, 1.6, 'sine', 0.55, 0.02);    // C6
+  playTone(output, 1318.51, chordStart, 1.6, 'sine', 0.45, 0.02);    // E6
+  playTone(output, 1567.98, chordStart, 1.6, 'triangle', 0.35, 0.02); // G6
+
+  // Shimmer harmonikler (kristal parıltı efekti)
+  playTone(output, 2093.00, chordStart + 0.1, 1.2, 'sine', 0.15, 0.03);
+  playTone(output, 2637.02, chordStart + 0.15, 1.0, 'sine', 0.10, 0.04);
+
+  // ── Faz 4: Final kapanış (2.8 – 3.5s) ──
+  // Yumuşak alçalan bas dolgu
+  playTone(output, 130, t + 2.5, 1.0, 'sine', 0.4, 0.02);
+  playTone(output, 65, t + 2.8, 0.7, 'sine', 0.3, 0.03);
+}
+
+const COMPLETION_DURATION = 3.5;
+
 export function warmupAudioEngine() {
   getContext();
 }
@@ -368,15 +439,27 @@ export function previewFailureSound(id: FailureSoundId, settings?: AudioSettings
   playFailurePreset(id, s);
 }
 
-export function playResultSound(category: 'success' | 'failure' | 'duplicate', settings?: AudioSettings) {
+export function playResultSound(
+  category: 'success' | 'failure' | 'duplicate' | 'exceeded' | 'completion',
+  settings?: AudioSettings,
+) {
   const s = settings ?? loadAudioSettings();
   if (!s.enabled) return;
+
   if (category === 'success') {
     playSuccessPreset(s.successSound, s);
   } else if (category === 'duplicate') {
     const t = getContext().currentTime;
     const output = createDuplicateChain(s, t, t + DUPLICATE_DURATION);
     playDuplicateSound(output, t);
+  } else if (category === 'exceeded') {
+    const t = getContext().currentTime;
+    const output = createFailureChain(s, t, t + EXCEEDED_DURATION);
+    playExceededSound(output, t);
+  } else if (category === 'completion') {
+    const t = getContext().currentTime;
+    const output = createSuccessChain(s, t, t + COMPLETION_DURATION);
+    playCompletionCelebration(output, t);
   } else {
     playFailurePreset(s.failureSound, s);
   }

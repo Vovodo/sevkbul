@@ -97,7 +97,12 @@ def _accept_scan(db, shipment_id: int, label: str, inv, sl) -> ScanResponse:
     if shipment.status == ShipmentStatus.CANCELLED:
         raise ValueError("Sevkiyat iptal edilmiş")
     if shipment.status == ShipmentStatus.COMPLETED:
-        raise ValueError("Sevkiyat zaten tamamlanmış")
+        _log_scan(db, shipment_id, label, inv.id, ScanResult.QUANTITY_EXCEEDED)
+        return _build_response(
+            ScanResult.QUANTITY_EXCEEDED.value, label, shipment_id, db,
+            reference=inv.reference, quantity=float(inv.quantity),
+            fifo_date=inv.fifo_date.strftime("%d.%m.%Y %H:%M") if inv.fifo_date else None,
+        )
 
     if sl.status != ShipmentLabelStatus.PENDING:
         _log_scan(db, shipment_id, label, inv.id, ScanResult.ALREADY_SCANNED)

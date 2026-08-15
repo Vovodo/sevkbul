@@ -26,6 +26,7 @@ class ScanResult(str, enum.Enum):
     OUTSIDE_SHIPMENT = "SEVKİYAT DIŞI"
     NOT_FOUND = "ETİKET BULUNAMADI"
     ALREADY_SCANNED = "ZATEN OKUTULDU"
+    QUANTITY_EXCEEDED = "MİKTAR AŞILDI"
 
 
 class InventoryLabel(Base):

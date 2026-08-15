@@ -323,28 +323,21 @@ export default function OperationPage() {
       setLastScan(result);
       playScanSound(result.result as ScanResultType);
 
-      setRecentScans(prev => [{
-        label: result.label,
-        reference: result.reference,
-        quantity: result.quantity,
-        result: result.result,
-        time: new Date().toLocaleTimeString('tr-TR'),
-      }, ...prev].slice(0, 30));
-
-      refreshStatus();
-
-      if (result.success && result.shipment_id && expandedId === result.shipment_id) {
-        loadScanned(result.shipment_id);
+      // Sevkiyat tamamlandıysa zafer melodisi çal
+      if (result.is_complete && result.success) {
+        setTimeout(() => playScanSound('COMPLETE' as ScanResultType), 300);
       }
 
       setTimeout(() => setLastScan(null), 1200);
+      // NOT: recentScans, shipments ve scannedLabels güncellemesi
+      // WebSocket handler tarafından yapılır (çift log önlenir)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Okutma hatası');
     } finally {
       setScanValue('');
       focusScanInput();
     }
-  }, [focusScanInput, expandedId]);
+  }, [focusScanInput]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -603,15 +596,21 @@ export default function OperationPage() {
           {recentScans.length > 0 && (
             <div className="op-recent">
               <h3>SON OKUTMALAR</h3>
-              {recentScans.map((s, i) => (
-                <div key={i} className={`op-recent-item ${s.result === 'SEVKİYAT ÜRÜNÜ' ? 'ok' : 'err'}`}>
-                  <span>{s.result === 'SEVKİYAT ÜRÜNÜ' ? '✓' : '✕'}</span>
-                  <span>{s.label}</span>
-                  <span>{s.reference || s.result}</span>
-                  {s.quantity != null && <span>{s.quantity} adet</span>}
-                  <span className="op-recent-time">{s.time}</span>
-                </div>
-              ))}
+              {recentScans.map((s, i) => {
+                const isOk = s.result === 'SEVKİYAT ÜRÜNÜ';
+                const isExceeded = s.result === 'MİKTAR AŞILDI';
+                const cls = isOk ? 'ok' : isExceeded ? 'exceeded' : 'err';
+                const icon = isOk ? '✓' : isExceeded ? '🚫' : '✕';
+                return (
+                  <div key={i} className={`op-recent-item ${cls}`}>
+                    <span>{icon}</span>
+                    <span>{s.label}</span>
+                    <span>{s.reference || s.result}</span>
+                    {s.quantity != null && <span>{s.quantity} adet</span>}
+                    <span className="op-recent-time">{s.time}</span>
+                  </div>
+                );
+              })}
             </div>
           )}
         </section>
