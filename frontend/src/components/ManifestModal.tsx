@@ -46,23 +46,24 @@ export default function ManifestModal({ isOpen, onClose }: ManifestModalProps) {
   const totalRequested = manifests.reduce((sum, m) => sum + m.requested_quantity, 0);
   const totalScanned = manifests.reduce((sum, m) => sum + m.scanned_quantity, 0);
   const totalLabels = manifests.reduce((sum, m) => sum + m.items.length, 0);
+  const completedRefs = manifests.filter(m => m.is_complete || m.scanned_quantity >= m.requested_quantity).length;
 
   return (
     <div className="manifest-overlay" onClick={onClose}>
       <div className="manifest-modal" onClick={e => e.stopPropagation()}>
-        {/* Printable & Screen Header */}
+        {/* Screen Header */}
         <div className="manifest-header no-print">
           <div className="manifest-title">
             <h2>📋 FİFO HESAPLAMA VE SİSTEM MANİFESTİ</h2>
             <div className="manifest-badges">
-              <span className="manifest-badge info">{manifests.length} Sevkiyat Referansı</span>
-              <span className="manifest-badge ok">{totalScanned} / {totalRequested} Adet Okutuldu</span>
-              <span className="manifest-badge pool">{totalLabels} Aday Etiket Havuzda</span>
+              <span className="manifest-badge info">{manifests.length} Referans</span>
+              <span className="manifest-badge ok">Toplam: {totalScanned} / {totalRequested} Adet ({completedRefs}/{manifests.length} Tamamlandı)</span>
+              <span className="manifest-badge pool">{totalLabels} Aday Etiket</span>
             </div>
           </div>
           <div className="manifest-actions">
-            <button type="button" className="op-btn primary compact" onClick={handlePrint}>
-              🖨️ Yazdır / PDF
+            <button type="button" className="op-btn primary compact" onClick={handlePrint} style={{ fontWeight: 700 }}>
+              🖨️ Yazdır / PDF İndir
             </button>
             <button type="button" className="op-btn danger compact" onClick={onClose}>
               ✕ Kapat
@@ -70,14 +71,21 @@ export default function ManifestModal({ isOpen, onClose }: ManifestModalProps) {
           </div>
         </div>
 
-        {/* Printable Area Body */}
-        <div className="manifest-body printable-content">
-          <div className="manifest-print-header print-only">
-            <h1>SEVKİYAT BUL — FİFO LİSTESİ VE HESAPLAMA MANİFESTİ</h1>
-            <div className="manifest-print-meta">
-              <span>Tarih: {new Date().toLocaleString('tr-TR')}</span>
-              <span>Toplam Hedef: {totalRequested} adet</span>
-              <span>Okutulan: {totalScanned} adet</span>
+        {/* Printable & Compact Container */}
+        <div className="manifest-body printable-manifest">
+          {/* Print Title Header (Only visible on printout) */}
+          <div className="manifest-print-top-bar print-only">
+            <div className="manifest-print-title-left">
+              <strong className="manifest-doc-title">SEVKİYAT BUL — FİFO YÜKLEME VE HESAPLAMA MANİFESTİ</strong>
+              <span className="manifest-doc-date">Tarih: {new Date().toLocaleString('tr-TR')}</span>
+            </div>
+            <div className="manifest-print-title-right">
+              <span className="manifest-doc-stat">Toplam İlerleme: <strong>{totalScanned} / {totalRequested} Adet</strong></span>
+              <span className="manifest-doc-stat">Tamamlanan Referans: <strong>{completedRefs} / {manifests.length}</strong></span>
+              <span className="manifest-legend">
+                <span className="legend-item"><span className="compact-dot filled">●</span> Bulunan (Okutuldu)</span>
+                <span className="legend-item"><span className="compact-dot empty">○</span> Bulunamayan (Bekliyor)</span>
+              </span>
             </div>
           </div>
 
@@ -88,65 +96,70 @@ export default function ManifestModal({ isOpen, onClose }: ManifestModalProps) {
           ) : manifests.length === 0 ? (
             <div className="manifest-empty">Henüz aktif bir sevkiyat hesaplaması yok.</div>
           ) : (
-            manifests.map((m, idx) => (
-              <div key={m.shipment_id} className="manifest-section">
-                {idx > 0 && <div className="manifest-divider">- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -</div>}
+            <div className="manifest-compact-list">
+              {manifests.map((m) => {
+                const isComplete = m.is_complete || m.scanned_quantity >= m.requested_quantity;
+                return (
+                  <div key={m.shipment_id} className={`manifest-ref-block ${isComplete ? 'is-complete' : ''}`}>
+                    {/* Compact Section Header */}
+                    <div className="manifest-compact-ref-header">
+                      <div className="ref-header-left">
+                        <strong className="ref-code">{m.reference}</strong>
+                        <span className="ref-filter-pill">
+                          {m.hourly_fifo ? 'SAAT ÖNCELİKLİ (HH:MM)' : 'GÜN ÖNCELİKLİ'}
+                        </span>
+                      </div>
+                      <div className="ref-header-right">
+                        <span className="ref-qty-box">
+                          İlerleme: <strong>{m.scanned_quantity} / {m.requested_quantity}</strong>
+                        </span>
+                        <span className={`ref-status-pill ${isComplete ? 'done' : 'ongoing'}`}>
+                          {isComplete ? 'TAMAMLANDI ✓' : 'DEVAM EDİYOR'}
+                        </span>
+                      </div>
+                    </div>
 
-                <div className="manifest-ref-header">
-                  <div className="manifest-ref-info">
-                    <span className="manifest-ref-title">{m.reference}</span>
-                    <span className="manifest-mode-tag">
-                      {m.hourly_fifo ? '⚡ SAAT+TARİH ÖNCELİKLİ (HH:MM)' : '📅 SADECE TARİH ÖNCELİKLİ'}
-                    </span>
-                  </div>
-                  <div className="manifest-ref-stats">
-                    <span>Hedef: <strong>{m.requested_quantity}</strong></span>
-                    <span>Havuz: <strong>{m.pool_quantity}</strong></span>
-                    <span>Okutulan: <strong style={{ color: m.is_complete ? '#10b981' : '#3b82f6' }}>{m.scanned_quantity} / {m.requested_quantity}</strong></span>
-                    <span className={`manifest-status-chip ${m.is_complete ? 'done' : 'active'}`}>
-                      {m.is_complete ? 'TAMAMLANDI' : 'DEVAM EDİYOR'}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="manifest-table-wrapper">
-                  <table className="manifest-table">
-                    <thead>
-                      <tr>
-                        <th style={{ width: '40px' }}>✓</th>
-                        <th>ETİKET NO</th>
-                        <th>REFERANS</th>
-                        <th style={{ textAlign: 'right' }}>MİKTAR</th>
-                        <th>FİFO TARİHİ & SAATİ</th>
-                        <th>FİFO HESAPLAMA GRUBU</th>
-                        <th>DURUM</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {m.items.map((item, itemIdx) => (
-                        <tr key={itemIdx} className={item.is_scanned ? 'scanned-row' : ''}>
-                          <td style={{ textAlign: 'center' }}>
-                            <span className={`check-mark ${item.is_scanned ? 'checked' : ''}`}>
-                              {item.is_scanned ? '✓' : '○'}
-                            </span>
-                          </td>
-                          <td className="font-mono label-cell">{item.label}</td>
-                          <td>{item.reference}</td>
-                          <td style={{ textAlign: 'right', fontWeight: 600 }}>{item.quantity}</td>
-                          <td className="font-mono">{item.fifo_date}</td>
-                          <td className="font-mono text-subtle">{item.fifo_group_date}</td>
-                          <td>
-                            <span className={`item-status-badge ${item.is_scanned ? 'scanned' : 'pending'}`}>
-                              {item.is_scanned ? 'OKUTULDU ✓' : 'BEKLİYOR'}
-                            </span>
-                          </td>
+                    {/* Dense Table */}
+                    <table className="manifest-dense-table">
+                      <thead>
+                        <tr>
+                          <th style={{ width: '28px', textAlign: 'center' }}>DURUM</th>
+                          <th style={{ width: '130px' }}>ETİKET NO</th>
+                          <th style={{ width: '150px' }}>REFERANS</th>
+                          <th style={{ width: '65px', textAlign: 'right' }}>MİKTAR</th>
+                          <th style={{ width: '140px' }}>FİFO TARİH & SAAT</th>
+                          <th style={{ width: '140px' }}>FİFO GRUBU</th>
+                          <th style={{ width: '85px', textAlign: 'center' }}>DURUM</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ))
+                      </thead>
+                      <tbody>
+                        {m.items.map((item, itemIdx) => (
+                          <tr key={itemIdx} className={item.is_scanned ? 'scanned-item-row' : 'pending-item-row'}>
+                            <td className="dot-cell" style={{ textAlign: 'center' }}>
+                              {item.is_scanned ? (
+                                <span className="compact-dot filled" title="Okutuldu / Bulundu">●</span>
+                              ) : (
+                                <span className="compact-dot empty" title="Bekliyor / Bulunamadı">○</span>
+                              )}
+                            </td>
+                            <td className="font-mono label-text">{item.label}</td>
+                            <td className="ref-cell">{item.reference}</td>
+                            <td className="qty-cell" style={{ textAlign: 'right' }}>{item.quantity}</td>
+                            <td className="font-mono date-cell">{item.fifo_date}</td>
+                            <td className="font-mono date-cell text-muted">{item.fifo_group_date}</td>
+                            <td style={{ textAlign: 'center' }}>
+                              <span className={`badge-pill ${item.is_scanned ? 'badge-scanned' : 'badge-pending'}`}>
+                                {item.is_scanned ? 'OKUTULDU' : 'BEKLİYOR'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       </div>

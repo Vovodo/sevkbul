@@ -1097,7 +1097,7 @@ body.fs-active .op-scan-input {
 }
 
 .manifest-body {
-  padding: 1.5rem;
+  padding: 1rem 1.25rem;
   overflow-y: auto;
   flex: 1;
 }
@@ -1109,152 +1109,172 @@ body.fs-active .op-scan-input {
   font-size: 1rem;
 }
 
-.manifest-divider {
-  margin: 1.5rem 0;
-  color: var(--border);
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
-  letter-spacing: 2px;
+.manifest-compact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.manifest-ref-block {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface2);
   overflow: hidden;
-  white-space: nowrap;
-  opacity: 0.6;
+  page-break-inside: avoid;
+  break-inside: avoid;
 }
 
-.manifest-section {
-  margin-bottom: 1.5rem;
+.manifest-ref-block.is-complete {
+  border-color: rgba(16, 185, 129, 0.4);
 }
 
-.manifest-ref-header {
+.manifest-compact-ref-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: var(--surface2);
-  padding: 0.75rem 1rem;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  margin-bottom: 0.75rem;
+  background: rgba(30, 41, 59, 0.8);
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
   gap: 0.5rem;
 }
 
-.manifest-ref-info {
+.ref-header-left {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.6rem;
 }
 
-.manifest-ref-title {
-  font-size: 1.1rem;
-  font-weight: 700;
+.ref-code {
+  font-size: 0.95rem;
+  font-weight: 800;
   color: #fff;
   font-family: var(--font-mono);
 }
 
-.manifest-mode-tag {
-  font-size: 0.7rem;
+.ref-filter-pill {
+  font-size: 0.65rem;
   font-weight: 700;
-  background: rgba(59, 130, 246, 0.2);
+  background: rgba(59, 130, 246, 0.15);
   color: #93c5fd;
-  padding: 0.15rem 0.5rem;
+  padding: 0.1rem 0.4rem;
   border-radius: 4px;
   border: 1px solid rgba(59, 130, 246, 0.3);
 }
 
-.manifest-ref-stats {
+.ref-header-right {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  font-size: 0.85rem;
+  gap: 0.75rem;
+  font-size: 0.8rem;
+}
+
+.ref-qty-box {
   color: var(--text-secondary);
 }
 
-.manifest-status-chip {
-  font-size: 0.7rem;
+.ref-qty-box strong {
+  color: #fff;
+  font-size: 0.9rem;
+}
+
+.ref-status-pill {
+  font-size: 0.65rem;
   font-weight: 700;
   padding: 0.15rem 0.5rem;
   border-radius: 4px;
 }
 
-.manifest-status-chip.done {
+.ref-status-pill.done {
   background: rgba(16, 185, 129, 0.2);
   color: #34d399;
 }
 
-.manifest-status-chip.active {
+.ref-status-pill.ongoing {
   background: rgba(59, 130, 246, 0.2);
   color: #60a5fa;
 }
 
-.manifest-table-wrapper {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.manifest-table {
+/* Dense Table */
+.manifest-dense-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
 }
 
-.manifest-table th {
-  background: var(--surface3);
+.manifest-dense-table th {
+  background: rgba(15, 23, 42, 0.6);
   color: var(--text-secondary);
   font-weight: 600;
   text-align: left;
-  padding: 0.6rem 0.8rem;
-  font-size: 0.75rem;
-  letter-spacing: 0.5px;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.3px;
   border-bottom: 1px solid var(--border);
 }
 
-.manifest-table td {
-  padding: 0.55rem 0.8rem;
-  border-bottom: 1px solid rgba(34, 45, 66, 0.6);
+.manifest-dense-table td {
+  padding: 0.3rem 0.6rem;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.4);
   color: var(--text);
+  line-height: 1.3;
 }
 
-.manifest-table tr:last-child td {
+.manifest-dense-table tr:last-child td {
   border-bottom: none;
 }
 
-.manifest-table tr.scanned-row {
-  background: rgba(16, 185, 129, 0.08);
+.manifest-dense-table tr.scanned-item-row {
+  background: rgba(16, 185, 129, 0.06);
 }
 
-.check-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  font-size: 0.8rem;
-  font-weight: bold;
-  border: 1px solid var(--muted);
-  color: var(--muted);
+.manifest-dense-table tr.pending-item-row {
+  background: transparent;
 }
 
-.check-mark.checked {
-  background: #10b981;
-  border-color: #10b981;
+/* Dots: Black Filled ● vs Empty ○ */
+.compact-dot {
+  display: inline-block;
+  font-size: 1.1rem;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.compact-dot.filled {
+  color: #10b981;
+  font-weight: 900;
+}
+
+.compact-dot.empty {
+  color: #64748b;
+  font-weight: 400;
+}
+
+.label-text {
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.qty-cell {
+  font-weight: 700;
   color: #fff;
 }
 
-.item-status-badge {
-  font-size: 0.7rem;
+.badge-pill {
+  display: inline-block;
+  font-size: 0.65rem;
   font-weight: 700;
-  padding: 0.15rem 0.45rem;
-  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
 }
 
-.item-status-badge.scanned {
+.badge-pill.badge-scanned {
   background: rgba(16, 185, 129, 0.2);
   color: #34d399;
 }
 
-.item-status-badge.pending {
-  background: rgba(100, 116, 139, 0.2);
+.badge-pill.badge-pending {
+  background: rgba(100, 116, 139, 0.15);
   color: #94a3b8;
 }
 
@@ -1262,78 +1282,291 @@ body.fs-active .op-scan-input {
   font-family: var(--font-mono);
 }
 
-.text-subtle {
-  color: var(--muted);
-}
-
 .print-only {
   display: none;
 }
 
-/* @media print for Paper Manifest Printouts */
+/* ═══════════════════════════════════════════════════════════════
+   ULTRA-COMPACT PAPER & INK-EFFICIENT PRINT STYLES (@media print)
+   - Zero Overlap Pagination
+   - High Information Density
+   - Siyah Dolu Nokta (●) = Bulunan, Boş Nokta (○) = Bulunamayan
+   ═══════════════════════════════════════════════════════════════ */
 @media print {
+  @page {
+    size: A4 portrait;
+    margin: 8mm 6mm;
+  }
+
+  html, body {
+    background: #fff !important;
+    color: #000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+    font-size: 8pt !important;
+  }
+
+  /* Hide everything on screen except the manifest */
   body * {
     visibility: hidden;
   }
-  .printable-content, .printable-content * {
-    visibility: visible;
+
+  .manifest-overlay,
+  .manifest-modal,
+  .printable-manifest,
+  .printable-manifest * {
+    visibility: visible !important;
   }
-  .printable-content {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    color: #000 !important;
-    background: #fff !important;
-    padding: 10px;
-  }
+
   .no-print {
     display: none !important;
   }
+
   .print-only {
-    display: block !original;
-    margin-bottom: 20px;
-    border-bottom: 2px solid #000;
-    padding-bottom: 10px;
+    display: flex !important;
   }
-  .print-only h1 {
-    font-size: 16pt;
-    font-weight: bold;
+
+  .manifest-overlay {
+    position: static !important;
+    background: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: block !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .manifest-modal {
+    position: static !important;
+    background: #fff !important;
+    border: none !important;
+    box-shadow: none !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: none !important;
+    height: auto !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+  }
+
+  .printable-manifest {
+    position: static !important;
+    background: #fff !important;
+    color: #000 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* Compact Print Header Bar */
+  .manifest-print-top-bar {
+    justify-content: space-between;
+    align-items: flex-end;
+    border-bottom: 2px solid #000;
+    padding-bottom: 4px;
+    margin-bottom: 6px;
+  }
+
+  .manifest-print-title-left {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .manifest-doc-title {
+    font-size: 11pt;
+    font-weight: 900;
+    color: #000;
+    letter-spacing: 0.3px;
+  }
+
+  .manifest-doc-date {
+    font-size: 7.5pt;
+    color: #444;
+  }
+
+  .manifest-print-title-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    font-size: 8pt;
+  }
+
+  .manifest-doc-stat strong {
+    font-weight: 800;
     color: #000;
   }
-  .manifest-print-meta {
+
+  .manifest-legend {
     display: flex;
-    gap: 20px;
-    font-size: 10pt;
-    margin-top: 5px;
+    gap: 8px;
+    font-size: 7.5pt;
+    margin-top: 2px;
   }
-  .manifest-modal {
-    box-shadow: none !important;
-    border: none !important;
+
+  .legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
+
+  /* Compact Reference Sections */
+  .manifest-compact-list {
+    display: block !important;
+    gap: 0 !important;
+  }
+
+  .manifest-ref-block {
+    border: 1px solid #666 !important;
     background: #fff !important;
-    max-width: 100% !important;
-    max-height: 100% !important;
+    margin-bottom: 6px !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    border-radius: 3px !important;
   }
-  .manifest-table th {
+
+  .manifest-compact-ref-header {
     background: #f1f5f9 !important;
-    color: #000 !important;
-    border-bottom: 2px solid #000 !important;
-  }
-  .manifest-table td {
-    border-bottom: 1px solid #ccc !important;
+    border-bottom: 1px solid #666 !important;
+    padding: 2px 6px !important;
     color: #000 !important;
   }
-  .manifest-ref-header {
-    background: #f8fafc !important;
+
+  .ref-code {
+    font-size: 9pt !important;
+    font-weight: 900 !important;
+    color: #000 !important;
+  }
+
+  .ref-filter-pill {
+    background: #e2e8f0 !important;
+    color: #000 !important;
+    border: 1px solid #94a3b8 !important;
+    font-size: 6.5pt !important;
+    padding: 0.5px 3px !important;
+  }
+
+  .ref-qty-box {
+    color: #000 !important;
+    font-size: 8pt !important;
+  }
+
+  .ref-qty-box strong {
+    color: #000 !important;
+    font-weight: 800 !important;
+  }
+
+  .ref-status-pill {
     border: 1px solid #000 !important;
-    color: #000 !important;
+    font-size: 6.5pt !important;
+    padding: 0.5px 4px !important;
   }
-  .manifest-ref-title {
-    color: #000 !important;
-  }
-  .check-mark.checked {
+
+  .ref-status-pill.done {
     background: #000 !important;
     color: #fff !important;
   }
-}
 
+  .ref-status-pill.ongoing {
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  /* Ultra-Dense Table */
+  .manifest-dense-table {
+    font-size: 7.5pt !important;
+    width: 100% !important;
+  }
+
+  .manifest-dense-table th {
+    background: #e2e8f0 !important;
+    color: #000 !important;
+    font-weight: 800 !important;
+    padding: 2px 4px !important;
+    border-bottom: 1px solid #444 !important;
+    border-right: 1px solid #ccc !important;
+    font-size: 7pt !important;
+  }
+
+  .manifest-dense-table th:last-child {
+    border-right: none !important;
+  }
+
+  .manifest-dense-table td {
+    padding: 1.5px 4px !important;
+    border-bottom: 1px solid #ddd !important;
+    border-right: 1px solid #eee !important;
+    color: #000 !important;
+    line-height: 1.15 !important;
+  }
+
+  .manifest-dense-table td:last-child {
+    border-right: none !important;
+  }
+
+  .manifest-dense-table tr.scanned-item-row {
+    background: #f8fafc !important;
+  }
+
+  .manifest-dense-table tr.pending-item-row {
+    background: #fff !important;
+  }
+
+  /* Siyah Dolu Nokta (●) = Bulunan, İçi Boş Nokta (○) = Bulunamayan */
+  .compact-dot {
+    font-size: 9pt !important;
+    line-height: 1 !important;
+  }
+
+  .compact-dot.filled {
+    color: #000 !important;
+    font-weight: 900 !important;
+  }
+
+  .compact-dot.empty {
+    color: #555 !important;
+    font-weight: bold !important;
+  }
+
+  .label-text {
+    font-weight: 800 !important;
+    color: #000 !important;
+  }
+
+  .ref-cell {
+    color: #000 !important;
+  }
+
+  .qty-cell {
+    font-weight: 800 !important;
+    color: #000 !important;
+  }
+
+  .date-cell {
+    color: #111 !important;
+  }
+
+  .badge-pill {
+    border: 1px solid #666 !important;
+    font-size: 6pt !important;
+    padding: 0 3px !important;
+  }
+
+  .badge-pill.badge-scanned {
+    background: #000 !important;
+    color: #fff !important;
+    border-color: #000 !important;
+  }
+
+  .badge-pill.badge-pending {
+    background: #fff !important;
+    color: #555 !important;
+  }
+}
