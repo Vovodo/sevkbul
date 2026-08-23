@@ -48,6 +48,14 @@ app.include_router(shipments.router)
 app.include_router(scan.router)
 app.include_router(operation.router)
 
+# APK ve statik dosyaları serve et (backend/static/ klasöründen)
+import os
+from fastapi.staticfiles import StaticFiles
+
+_static_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
+if os.path.exists(_static_dir):
+    app.mount("/static", StaticFiles(directory=_static_dir), name="static")
+
 
 @app.api_route("/", methods=["GET", "HEAD"])
 @app.api_route("/ping", methods=["GET", "HEAD"])

@@ -6,15 +6,26 @@ interface MobileDownloadModalProps {
   onClose: () => void;
 }
 
+// APK indirme URL'ini belirle:
+// Coolify'da VITE_API_URL build arg olarak verilmişse onu kullan,
+// verilmemişse aynı origin üzerinden /api/download/apk'ya git.
+function getDownloadUrl(): string {
+  const raw = (import.meta.env.VITE_API_URL || '').trim();
+  if (raw) {
+    // Trailing slash ve /api suffix temizle
+    const base = raw.replace(/\/+$/, '').replace(/\/api(\/v\d+)?$/i, '');
+    return `${base}/api/download/apk`;
+  }
+  // Fallback: aynı origin (nginx reverse proxy üzerinden çalışır)
+  return `${window.location.origin}/api/download/apk`;
+}
+
 export default function MobileDownloadModal({ isOpen, onClose }: MobileDownloadModalProps) {
   const [copied, setCopied] = useState<boolean>(false);
 
   if (!isOpen) return null;
 
-  // Determine current download URL
-  const apiBase = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '').replace(/\/api(\/v\d+)?$/i, '');
-  const downloadUrl = apiBase ? `${apiBase}/api/download/apk` : `${window.location.origin}/api/download/apk`;
-  const mobileWebUrl = window.location.origin;
+  const downloadUrl = getDownloadUrl();
 
   const handleCopy = () => {
     navigator.clipboard.writeText(downloadUrl).then(() => {
@@ -31,7 +42,7 @@ export default function MobileDownloadModal({ isOpen, onClose }: MobileDownloadM
             <span className="modal-icon">📱</span>
             <div>
               <h3>SevkiyatBul Mobil Uygulaması</h3>
-              <span className="modal-subtitle">Android APK & Mobil Web Erişimi</span>
+              <span className="modal-subtitle">Android APK İndir</span>
             </div>
           </div>
           <button type="button" className="op-btn danger compact" onClick={onClose}>
@@ -40,22 +51,22 @@ export default function MobileDownloadModal({ isOpen, onClose }: MobileDownloadM
         </div>
 
         <div className="download-modal-body">
-          {/* QR Code Container */}
+          {/* QR Code */}
           <div className="qr-code-section">
             <div className="qr-box">
               <QRCodeSVG
                 value={downloadUrl}
-                size={190}
+                size={200}
                 level="H"
                 includeMargin={true}
                 bgColor="#ffffff"
                 fgColor="#0f172a"
               />
             </div>
-            <span className="qr-hint">Telefon veya el terminali kamerasıyla okutun</span>
+            <span className="qr-hint">Telefon kamerasıyla okutun — doğrudan APK indirir</span>
           </div>
 
-          {/* Action Buttons */}
+          {/* Butonlar */}
           <div className="download-actions-grid">
             <a
               href={downloadUrl}
@@ -68,24 +79,27 @@ export default function MobileDownloadModal({ isOpen, onClose }: MobileDownloadM
             </a>
 
             <button type="button" className="op-btn secondary" onClick={handleCopy}>
-              <span>{copied ? '✓ İndirme Linki Kopyalandı!' : '📋 İndirme Linkini Kopyala'}</span>
+              <span>{copied ? '✓ Link Kopyalandı!' : '📋 İndirme Linkini Kopyala'}</span>
             </button>
           </div>
 
-          {/* Instructions Box */}
+          {/* URL göster */}
           <div className="download-guide-box">
-            <h4>📌 Kolay Kurulum Adımları:</h4>
+            <h4>📌 Kurulum Adımları:</h4>
             <ol className="guide-steps">
               <li>
-                <strong>QR Kodu Okutun:</strong> Telefon veya el terminalinizin kamerasıyla yukarıdaki QR kodu okutun.
+                <strong>QR Kodu Okutun:</strong> Telefonunuzun kamerasıyla yukarıdaki QR kodu tarayın.
               </li>
               <li>
-                <strong>APK'yı İndirin:</strong> Açılan bağlantıdan <code>SevkiyatBul.apk</code> dosyasını cihazınıza indirin.
+                <strong>APK'yı İndirin:</strong> Açılan bağlantıdan <code>SevkiyatBul.apk</code> dosyasını indirin.
               </li>
               <li>
-                <strong>Yükleyin & Kullanın:</strong> İndirilen dosyaya dokunup <em>"Yükle"</em> seçeneğini onaylayın ve uygulamayı başlatın.
+                <strong>İzin Verin ve Yükleyin:</strong> Telefonda "Bilinmeyen kaynaklardan yükle" iznini onaylayın, ardından <em>"Yükle"</em> deyin.
               </li>
             </ol>
+            <p style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#94a3b8', wordBreak: 'break-all' }}>
+              İndirme linki: <a href={downloadUrl} target="_blank" rel="noreferrer" style={{ color: '#93c5fd' }}>{downloadUrl}</a>
+            </p>
           </div>
         </div>
       </div>
