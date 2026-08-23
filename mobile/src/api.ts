@@ -1,18 +1,26 @@
 import { Capacitor } from '@capacitor/core';
 
+const PRODUCTION_API = 'https://sevkbulapi.rfqcollector.com';
+
 export function getApiBase(): string {
   let url = (import.meta.env.VITE_API_URL || '').trim();
-  if (!url) {
-    if (Capacitor.isNativePlatform()) {
-      // Native Android / iOS default production endpoint
-      return 'https://sevkbulapi.rfqcollector.com';
-    }
-    // Local web proxy in browser
+  if (url) {
+    url = url.replace(/\/+$/, '');
+    url = url.replace(/\/api(\/v\d+)?$/i, '');
+    return url;
+  }
+  // VITE_API_URL verilmemişse (local dev dışında):
+  // Native Android'de Capacitor WebView'i localhost olarak görür — production backend kullan
+  // Web tarayıcısında mobile servis URL'i backend değildir — production backend kullan
+  if (Capacitor.isNativePlatform()) {
+    return PRODUCTION_API;
+  }
+  // Yerel geliştirme ortamı: vite proxy üzerinden erişim (boş string → relative URL)
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
     return '';
   }
-  url = url.replace(/\/+$/, '');
-  url = url.replace(/\/api(\/v\d+)?$/i, '');
-  return url;
+  // Coolify/production mobile servisinde VITE_API_URL girilmemişse hardcode backend kullan
+  return PRODUCTION_API;
 }
 
 export const API_BASE = getApiBase();

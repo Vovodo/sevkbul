@@ -6,9 +6,10 @@ export function getWsUrl(): string {
     // https://xxx.rfqcollector.com → wss://xxx.rfqcollector.com/ws
     return API_BASE.replace(/^http/, 'ws') + '/ws';
   }
-  // Local browser proxy fallback
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${window.location.host}/ws`;
+  // API_BASE boşken (VITE_API_URL girilmemişse) production backend'e doğrudan bağlan
+  // window.location.host mobile servisine işaret edebilir, backend'e değil!
+  // Bu yüzden hardcoded production backend URL kullanılır.
+  return 'wss://sevkbulapi.rfqcollector.com/ws';
 }
 
 export type WsEventType = 'scan' | 'undo' | 'reset' | 'find' | 'target_add' | 'target_clear' | 'target_import' | 'stock_import';
