@@ -3,6 +3,7 @@ import { api, ShipmentProgress, ScanResponse, ShipmentTarget, RecentScan, Scanne
 import { playScanSound, getResultStyle, initAudio, ScanResultType } from '../audio';
 import SoundSettings from '../components/SoundSettings';
 import ManifestModal from '../components/ManifestModal';
+import MobileDownloadModal from '../components/MobileDownloadModal';
 import { useLiveUpdates, WsMessage } from '../useLiveUpdates';
 
 type Phase = 'setup' | 'scanning';
@@ -11,6 +12,7 @@ export default function OperationPage() {
   const [phase, setPhase] = useState<Phase>('setup');
   const [showSetup, setShowSetup] = useState(true);
   const [showManifestModal, setShowManifestModal] = useState(false);
+  const [showDownloadModal, setShowDownloadModal] = useState(false);
   const [stockLoaded, setStockLoaded] = useState(false);
   const [stockCount, setStockCount] = useState(0);
   const [targets, setTargets] = useState<ShipmentTarget[]>([]);
@@ -385,11 +387,20 @@ export default function OperationPage() {
               </button>
             </>
           )}
+          <button
+            type="button"
+            className="op-btn secondary compact mobile-download-header-btn"
+            onClick={() => setShowDownloadModal(true)}
+            style={{ fontWeight: 700, borderColor: '#3b82f6', color: '#93c5fd' }}
+          >
+            📱 Mobil İndir / QR
+          </button>
           <SoundSettings />
         </div>
       </header>
 
       <ManifestModal isOpen={showManifestModal} onClose={() => setShowManifestModal(false)} />
+      <MobileDownloadModal isOpen={showDownloadModal} onClose={() => setShowDownloadModal(false)} />
 
       {error && <div className="op-alert error">{error}</div>}
 

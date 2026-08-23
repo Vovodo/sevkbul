@@ -80,6 +80,40 @@ def uptimerobot_health(request: Request):
     )
 
 
+@app.get("/api/download/apk")
+@app.get("/downloads/SevkiyatBul.apk")
+def download_apk():
+    """
+    Mobil Android APK İndirme Endpoint'i:
+    Kullanıcılar web arayüzündeki QR kod veya indirme butonu ile doğrudan APK'yı indirir.
+    """
+    import os
+    from fastapi.responses import FileResponse
+
+    # Statik dizindeki APK dosyasını kontrol et
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    apk_path = os.path.join(base_dir, "static", "SevkiyatBul.apk")
+
+    if os.path.exists(apk_path):
+        return FileResponse(
+            path=apk_path,
+            filename="SevkiyatBul.apk",
+            media_type="application/vnd.android.package-archive",
+        )
+
+    # APK henüz yüklenmemişse bilgilendirici yanıt dön
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "info",
+            "message": "APK derleme hazırlandı. APK dosyasını 'backend/static/SevkiyatBul.apk' dizinine yükleyebilir veya mobil web arayüzünü doğrudan kullanabilirsiniz.",
+            "mobile_web_url": "https://sevkbul.rfqcollector.com",
+            "github_repo": "https://github.com/Vovodo/sevkbul",
+        },
+    )
+
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """Gerçek zamanlı canlı güncelleme WebSocket endpoint'i."""
