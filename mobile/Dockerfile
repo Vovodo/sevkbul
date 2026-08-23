@@ -10,7 +10,9 @@ RUN npm ci --no-audit --prefer-offline
 # Kaynak kodu kopyala
 COPY . .
 
-# Production build (VITE_API_URL Coolify'da environment variable olarak verilmeli)
+# Production build: Capacitor native olmadan web olarak build edilir.
+# Android APK için Android Studio veya Gradle pipeline kullanılmalı.
+# Bu image mobil web tarayıcısı için optimize edilmiş web önizleme sağlar.
 ARG VITE_API_URL=https://sevkbulapi.rfqcollector.com
 ENV VITE_API_URL=$VITE_API_URL
 
@@ -19,13 +21,19 @@ RUN npm run build
 # ─── Stage 2: Serve ───────────────────────────────────────────
 FROM nginx:alpine AS runner
 
-# React Router için SPA fallback yapılandırması
+# SPA fallback + mobil cache optimizasyonu
 RUN echo 'server { \
   listen 80; \
   root /usr/share/nginx/html; \
   index index.html; \
+  gzip on; \
+  gzip_types text/plain text/css application/javascript application/json; \
   location / { \
     try_files $uri $uri/ /index.html; \
+  } \
+  location ~* \.(js|css|png|jpg|svg|ico|woff2)$ { \
+    expires 1y; \
+    add_header Cache-Control "public, immutable"; \
   } \
   location /health { \
     return 200 "ok"; \
@@ -33,7 +41,6 @@ RUN echo 'server { \
   } \
 }' > /etc/nginx/conf.d/default.conf
 
-# Build çıktısını nginx serve dizinine kopyala
 COPY --from=builder /app/dist /usr/share/nginx/html
 
 EXPOSE 80
