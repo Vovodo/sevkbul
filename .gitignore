@@ -23,4 +23,7 @@ venv/
 **/android/captures/
 **/android/.idea/
 *.apk
+# Backend static klasöründeki APK'ya izin ver (Docker build'e dahil edilmeli)
+!backend/static/*.apk
+
 
