@@ -16,3 +16,11 @@ venv/
 .venv/
 .DS_Store
 *.log
+.gradle/
+**/android/.gradle/
+**/android/app/build/
+**/android/build/
+**/android/captures/
+**/android/.idea/
+*.apk
+
