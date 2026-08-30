@@ -1,5 +1,5 @@
-import { useEffect, useRef, useCallback } from 'react';
-import { Minimize2, CheckCircle, AlertTriangle, Ban, AlertCircle, XCircle } from 'lucide-react';
+import { useEffect } from 'react';
+import { X, CheckCircle, AlertTriangle, Ban, AlertCircle, XCircle } from 'lucide-react';
 import { ScanResponse } from '../api';
 import { ScreenOrientation } from '@capacitor/screen-orientation';
 import { Capacitor } from '@capacitor/core';
@@ -9,7 +9,7 @@ interface FullscreenScanModalProps {
   isOpen: boolean;
   onClose: () => void;
   lastScan: ScanResponse | null;
-  onScan: (label: string) => void;
+  onScan?: (label: string) => void;
   isScanning?: boolean;
 }
 
@@ -17,24 +17,17 @@ export default function FullscreenScanModal({
   isOpen,
   onClose,
   lastScan,
-  onScan,
-  isScanning = false,
 }: FullscreenScanModalProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const focusInput = useCallback(() => {
-    setTimeout(() => {
-      inputRef.current?.focus({ preventScroll: true });
-    }, 100);
-  }, []);
-
-  // Lock orientation to landscape or optimize for full screen when open
+  // Ekranı otomatik yatay (landscape) yap ve tarayıcıyı tam ekran yap (klavye AÇILMAZ)
   useEffect(() => {
     if (!isOpen) return;
 
-    focusInput();
+    // Tarayıcı / Web fullscreen modunu tetikle
+    if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
 
-    // Lock orientation if native platform supports it
+    // Ekranı yatay (landscape) kilitle
     if (Capacitor.isNativePlatform()) {
       ScreenOrientation.lock({ orientation: 'landscape' }).catch(() => {});
     } else {
@@ -49,6 +42,11 @@ export default function FullscreenScanModal({
     }
 
     return () => {
+      // Çıkışta tam ekrandan çık ve ekranı normale döndür
+      if (document.fullscreenElement && document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      }
+
       if (Capacitor.isNativePlatform()) {
         ScreenOrientation.unlock().catch(() => {});
       } else {
@@ -62,71 +60,47 @@ export default function FullscreenScanModal({
         }
       }
     };
-  }, [isOpen, focusInput]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const val = e.currentTarget.value.trim();
-      if (val) {
-        onScan(val);
-        e.currentTarget.value = '';
-      }
-    }
-  };
 
   const getBadgeDetails = (result: string) => {
     switch (result) {
       case 'SEVKİYAT ÜRÜNÜ':
-        return { bgClass: 'res-success', icon: <CheckCircle size={64} />, title: 'SEVKİYAT ÜRÜNÜ' };
+        return { bgClass: 'res-success', icon: <CheckCircle size={72} />, title: 'SEVKİYAT ÜRÜNÜ' };
       case 'MİKTAR AŞILDI':
-        return { bgClass: 'res-exceeded', icon: <Ban size={64} />, title: 'MİKTAR AŞILDI' };
+        return { bgClass: 'res-exceeded', icon: <Ban size={72} />, title: 'MİKTAR AŞILDI' };
       case 'ZATEN OKUTULDU':
-        return { bgClass: 'res-duplicate', icon: <AlertCircle size={64} />, title: 'ZATEN OKUTULDU' };
+        return { bgClass: 'res-duplicate', icon: <AlertCircle size={72} />, title: 'ZATEN OKUTULDU' };
       case 'ETİKET BULUNAMADI':
-        return { bgClass: 'res-notfound', icon: <AlertTriangle size={64} />, title: 'ETİKET BULUNAMADI' };
+        return { bgClass: 'res-notfound', icon: <AlertTriangle size={72} />, title: 'ETİKET BULUNAMADI' };
       case 'SEVKİYAT DIŞI':
       default:
-        return { bgClass: 'res-failure', icon: <XCircle size={64} />, title: 'SEVKİYAT DIŞI' };
+        return { bgClass: 'res-failure', icon: <XCircle size={72} />, title: 'SEVKİYAT DIŞI' };
     }
   };
 
   const badge = lastScan ? getBadgeDetails(lastScan.result) : null;
 
+  const handleClose = () => {
+    void triggerTapHaptic();
+    onClose();
+  };
+
   return (
-    <div className="mobile-fs-overlay" role="dialog" aria-modal="true" onClick={focusInput}>
-      {/* Invisible auto-focused barcode input */}
-      <input
-        ref={inputRef}
-        type="text"
-        className="mobile-fs-hidden-input"
-        onKeyDown={handleKeyDown}
-        disabled={isScanning}
-        autoFocus
-        autoCapitalize="none"
-        autoCorrect="off"
-        spellCheck="false"
-      />
+    <div className="mobile-fs-overlay" role="dialog" aria-modal="true">
+      {/* Minimal Floating Close Button */}
+      <button
+        type="button"
+        className="mobile-fs-floating-close-btn"
+        onClick={handleClose}
+        title="Tam Ekrandan Çık"
+        aria-label="Kapat"
+      >
+        <X size={24} />
+      </button>
 
-      {/* Top action bar */}
-      <div className="mobile-fs-header">
-        <span className="mobile-fs-live-badge">🔴 CANLI OKUTMA EKRANI</span>
-        <button
-          type="button"
-          className="mobile-fs-close-btn"
-          onClick={() => {
-            void triggerTapHaptic();
-            onClose();
-          }}
-        >
-          <Minimize2 size={18} />
-          <span>Tam Ekrandan Çık</span>
-        </button>
-      </div>
-
-      {/* Main Fullscreen Display Card */}
+      {/* Sıfıra Sıfır Tam Ekran Bildirim Kartı */}
       <div className="mobile-fs-card-wrap">
         {lastScan && badge ? (
           <div key={lastScan.label + lastScan.result} className={`mobile-fs-card ${badge.bgClass}`}>
@@ -165,7 +139,7 @@ export default function FullscreenScanModal({
           <div className="mobile-fs-card waiting">
             <div className="mobile-fs-waiting-dot" />
             <div className="mobile-fs-card-title">Okutma Bekleniyor...</div>
-            <span className="mobile-fs-hint">Barkod veya QR kod okuttuğunuzda sonuç anında burada belirecektir.</span>
+            <span className="mobile-fs-hint">Barkod veya QR kod okutulduğunda sonuç %100 tam ekran burada belirecektir.</span>
           </div>
         )}
       </div>
