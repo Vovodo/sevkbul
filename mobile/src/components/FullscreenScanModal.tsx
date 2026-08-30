@@ -137,7 +137,15 @@ export default function FullscreenScanModal({
           </div>
         ) : (
           <div className="mobile-fs-card waiting">
-            <div className="mobile-fs-waiting-dot" />
+            <div className="fs-waiting-animation">
+              <div className="fs-pulse-ring ring-1" />
+              <div className="fs-pulse-ring ring-2" />
+              <div className="fs-pulse-ring ring-3" />
+              <div className="fs-waiting-core">
+                <span className="fs-waiting-beam" />
+                <span className="fs-waiting-icon">📡</span>
+              </div>
+            </div>
             <div className="mobile-fs-card-title">Okutma Bekleniyor...</div>
             <span className="mobile-fs-hint">Barkod veya QR kod okutulduğunda sonuç %100 tam ekran burada belirecektir.</span>
           </div>

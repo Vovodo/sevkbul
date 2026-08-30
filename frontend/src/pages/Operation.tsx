@@ -668,14 +668,11 @@ export default function OperationPage() {
       )}
 
       {isFullscreen && (
-        <div className="fs-overlay" role="dialog" aria-modal="true" aria-label="Tam ekran okutma bildirimi">
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', marginBottom: '1rem' }}>
-            <Logo size="sm" variant="full" />
-            <button type="button" className="fs-close-btn" onClick={exitFullscreen}>
-              ✕ Tam Ekrandan Çık
-            </button>
-          </div>
-
+        <div className="fs-overlay" role="dialog" aria-modal="true" aria-label="Tam ekran okutma bildirimi" onClick={focusScanInput}>
+          {/* Floating close button in top right */}
+          <button type="button" className="fs-close-btn" onClick={exitFullscreen}>
+            ✕ Tam Ekrandan Çık
+          </button>
 
           <div className="fs-card-container">
             {lastScan && resultStyle ? (
@@ -711,9 +708,18 @@ export default function OperationPage() {
               </div>
             ) : (
               <div className="fs-card waiting">
-                <div className="fs-card-icon">⏳</div>
-                <div className="fs-card-result-text">SONUÇ BEKLENİYOR</div>
-                <div className="fs-card-sub">Yeni okutma geldiğinde burada büyük boyutta görüntülenecek</div>
+                {/* Modern Radar Scanning Pulse Animation */}
+                <div className="fs-waiting-animation">
+                  <div className="fs-pulse-ring ring-1" />
+                  <div className="fs-pulse-ring ring-2" />
+                  <div className="fs-pulse-ring ring-3" />
+                  <div className="fs-waiting-core">
+                    <span className="fs-waiting-beam" />
+                    <span className="fs-waiting-icon">📡</span>
+                  </div>
+                </div>
+                <div className="fs-card-result-text">OKUTMA BEKLENİYOR</div>
+                <div className="fs-card-sub">Barkod veya QR kod okutulduğunda sonuç anında burada tam ekran görüntülenecektir.</div>
               </div>
             )}
           </div>
