@@ -112,6 +112,17 @@ export default function ShipmentCard({
     }
   };
 
+  // Whenever group data updates (e.g. after a scan), auto-refresh any open reference's scanned labels and manifest!
+  useEffect(() => {
+    Object.keys(expandedRefs).forEach(key => {
+      const sid = Number(key);
+      if (expandedRefs[sid]) {
+        loadScannedForRef(sid);
+        loadManifestForRef(sid);
+      }
+    });
+  }, [g, expandedRefs]);
+
   const handleUndo = async (shipmentId: number, label: string) => {
     await onUndoScan(shipmentId, label);
     await loadScannedForRef(shipmentId);
@@ -274,7 +285,7 @@ export default function ShipmentCard({
                           onClick={() => setActiveRefTab(prev => ({ ...prev, [item.shipment_id]: 'scanned' }))}
                           style={{ fontSize: '0.75rem', padding: '3px 8px' }}
                         >
-                          Okutulan Etiketler ({scannedList.length})
+                          Okutulan Etiketler ({scannedMap[item.shipment_id] ? scannedList.length : (item.scanned_label_count ?? 0)})
                         </button>
                         <button
                           type="button"
@@ -282,7 +293,7 @@ export default function ShipmentCard({
                           onClick={() => setActiveRefTab(prev => ({ ...prev, [item.shipment_id]: 'fifo' }))}
                           style={{ fontSize: '0.75rem', padding: '3px 8px' }}
                         >
-                          📋 FIFO Listesi ({manifestList.length})
+                          📋 FIFO Listesi ({manifestMap[item.shipment_id] ? manifestList.length : (manifestList.length || '...')})
                         </button>
                       </div>
 

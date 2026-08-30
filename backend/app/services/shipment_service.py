@@ -196,6 +196,11 @@ def get_shipment_progress(db: Session, shipment_id: int) -> dict:
         if sl.status in (ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL)
     )
 
+    scanned_labels_count = sum(
+        1 for sl in all_labels
+        if sl.status in (ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL)
+    )
+
     scanned_f = float(scanned_qty)
     remaining_target = max(0, requested - scanned_f)
     progress = (scanned_f / requested * 100) if requested > 0 else 0
@@ -208,6 +213,7 @@ def get_shipment_progress(db: Session, shipment_id: int) -> dict:
         "requested_quantity": requested,
         "pool_quantity": pool_f,
         "scanned_quantity": scanned_f,
+        "scanned_label_count": scanned_labels_count,
         "remaining_quantity": remaining_target,
         "progress_percent": round(min(progress, 100), 1),
         "status": shipment.status.value,

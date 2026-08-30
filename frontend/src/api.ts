@@ -60,6 +60,7 @@ export interface ShipmentProgress {
   requested_quantity: number;
   pool_quantity: number;
   scanned_quantity: number;
+  scanned_label_count?: number;
   remaining_quantity: number;
   progress_percent: number;
   status: string;
@@ -122,6 +123,8 @@ export interface ShipmentManifestItem {
 
 export interface ShipmentManifest {
   shipment_id: number;
+  group_id?: number;
+  group_name?: string | null;
   reference: string;
   requested_quantity: number;
   pool_quantity: number;

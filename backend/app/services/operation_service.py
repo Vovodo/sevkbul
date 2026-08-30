@@ -206,6 +206,8 @@ def get_shipment_manifest(db: Session) -> list[dict]:
 
         manifests.append({
             "shipment_id": s.id,
+            "group_id": s.group_id or s.id,
+            "group_name": s.group_name or s.name,
             "reference": s.reference,
             "requested_quantity": prog["requested_quantity"],
             "pool_quantity": prog["pool_quantity"],

@@ -55,6 +55,7 @@ class ShipmentProgressSchema(BaseModel):
     requested_quantity: float
     pool_quantity: float
     scanned_quantity: float
+    scanned_label_count: int = 0
     remaining_quantity: float
     progress_percent: float
     status: str
@@ -194,6 +195,8 @@ class ShipmentManifestItemSchema(BaseModel):
 
 class ShipmentManifestSchema(BaseModel):
     shipment_id: int
+    group_id: int | None = None
+    group_name: str | None = None
     reference: str
     requested_quantity: float
     pool_quantity: float

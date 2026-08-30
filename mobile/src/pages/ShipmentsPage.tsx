@@ -57,6 +57,14 @@ export default function ShipmentsPage({
     }
   }, [editingGroupId]);
 
+  // Whenever groups prop updates (e.g. on live scan), auto-refresh currently opened reference drawer
+  useEffect(() => {
+    if (expandedRefId != null) {
+      loadScannedLabels(expandedRefId);
+      loadFifoManifest(expandedRefId);
+    }
+  }, [groups, expandedRefId]);
+
   const loadScannedLabels = async (shipmentId: number) => {
     try {
       const labels = await api.getScannedLabels(shipmentId);
@@ -497,7 +505,7 @@ export default function ShipmentsPage({
                                     }}
                                   >
                                     <ScanLine size={12} />
-                                    <span>Okutulanlar ({scannedItems.length})</span>
+                                    <span>Okutulanlar ({scannedMap[item.shipment_id] ? scannedItems.length : (item.scanned_label_count ?? 0)})</span>
                                   </button>
 
                                   <button
@@ -520,7 +528,7 @@ export default function ShipmentsPage({
                                     }}
                                   >
                                     <ListOrdered size={12} />
-                                    <span>FIFO Havuzu ({fifoItems.length})</span>
+                                    <span>FIFO Havuzu ({fifoMap[item.shipment_id] ? fifoItems.length : (fifoItems.length || '...')})</span>
                                   </button>
                                 </div>
 
