@@ -569,6 +569,58 @@ html, body {
   box-shadow: 0 8px 24px rgba(220, 38, 38, 0.35);
 }
 
+/* Floating Live Scan Toast */
+.mobile-floating-toast {
+  position: absolute;
+  top: calc(3.4rem + env(safe-area-inset-top, 0px));
+  left: 1rem;
+  right: 1rem;
+  z-index: 50;
+  border-radius: 10px;
+  padding: 0.65rem 0.85rem;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+  animation: toast-slide-down 0.25s ease-out;
+}
+
+@keyframes toast-slide-down {
+  from { transform: translateY(-20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.mobile-floating-toast.res-success {
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+}
+
+.mobile-floating-toast.res-exceeded {
+  background: linear-gradient(135deg, #ea580c 0%, #c2410c 100%);
+}
+
+.mobile-floating-toast.res-duplicate {
+  background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+}
+
+.mobile-floating-toast.res-failure {
+  background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+}
+
+.mobile-floating-toast .toast-tag {
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.9;
+}
+
+.mobile-floating-toast .toast-body {
+  font-size: 0.85rem;
+}
+
+
 .result-card-header {
   display: flex;
   align-items: center;

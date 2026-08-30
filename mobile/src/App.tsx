@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api, ShipmentProgress, ShipmentTarget, RecentScan, ShipmentManifest, ScanResponse } from './api';
 import { useLiveUpdates, WsMessage } from './useLiveUpdates';
+import { playMobileSound } from './audio/audioEngine';
 import Header from './components/Header';
 import BottomNav, { MobileTab } from './components/BottomNav';
 import SoundSettingsModal from './components/SoundSettingsModal';
@@ -15,6 +16,7 @@ export default function App() {
   const [targets, setTargets] = useState<ShipmentTarget[]>([]);
   const [manifests, setManifests] = useState<ShipmentManifest[]>([]);
   const [recentScans, setRecentScans] = useState<RecentScan[]>([]);
+  const [lastScan, setLastScan] = useState<ScanResponse | null>(null);
   const [stockLoaded, setStockLoaded] = useState<boolean>(false);
   const [stockCount, setStockCount] = useState<number>(0);
   const [showSoundModal, setShowSoundModal] = useState<boolean>(false);
@@ -61,6 +63,7 @@ export default function App() {
       setShipments([]);
       setRecentScans([]);
       setManifests([]);
+      setLastScan(null);
       if (d?.targets) {
         setTargets(d.targets);
       }
@@ -77,6 +80,30 @@ export default function App() {
 
     if (msg.event === 'scan' && d?.scan) {
       const scanData = d.scan as ScanResponse;
+      setLastScan(scanData);
+
+      // Ses & Titreşim efekti çal
+      try {
+        if (scanData.is_complete && scanData.success) {
+          playMobileSound('completion');
+        } else if (scanData.result === 'SEVKİYAT ÜRÜNÜ') {
+          playMobileSound('success');
+        } else if (scanData.result === 'ZATEN OKUTULDU') {
+          playMobileSound('duplicate');
+        } else if (scanData.result === 'MİKTAR AŞILDI') {
+          playMobileSound('exceeded');
+        } else {
+          playMobileSound('failure');
+        }
+      } catch {
+        // audio context
+      }
+
+      // 3.5 saniye sonra bildirimi kaldır
+      setTimeout(() => {
+        setLastScan((prev) => (prev?.label === scanData.label ? null : prev));
+      }, 3500);
+
       setRecentScans((prev) => [
         {
           label: scanData.label,
@@ -100,6 +127,7 @@ export default function App() {
     setShipments([]);
     setRecentScans([]);
     setManifests([]);
+    setLastScan(null);
     setActiveTab('setup');
   };
 
@@ -127,12 +155,36 @@ export default function App() {
         onOpenSoundSettings={() => setShowSoundModal(true)}
       />
 
+      {/* Floating Live Scan Toast when on other tabs */}
+      {activeTab !== 'scan' && lastScan && (
+        <div
+          className={`mobile-floating-toast res-${
+            lastScan.result === 'SEVKİYAT ÜRÜNÜ'
+              ? 'success'
+              : lastScan.result === 'MİKTAR AŞILDI'
+              ? 'exceeded'
+              : lastScan.result === 'ZATEN OKUTULDU'
+              ? 'duplicate'
+              : 'failure'
+          }`}
+          onClick={() => setActiveTab('scan')}
+        >
+          <div className="toast-tag">{lastScan.result}</div>
+          <div className="toast-body">
+            <strong>{lastScan.label}</strong>
+            {lastScan.reference && <span> • {lastScan.reference} ({lastScan.quantity} Adet)</span>}
+          </div>
+        </div>
+      )}
+
       {/* Main Page Body */}
       <main className="mobile-content">
         {activeTab === 'scan' && (
           <ScanPage
             shipments={shipments}
             recentScans={recentScans}
+            lastScan={lastScan}
+            onSetLastScan={setLastScan}
             onRefreshShipments={() => {
               api.getShipmentStatus().then(setShipments).catch(() => {});
             }}
@@ -140,6 +192,7 @@ export default function App() {
             onNavigateToShipments={() => setActiveTab('shipments')}
           />
         )}
+
 
         {activeTab === 'shipments' && (
           <ShipmentsPage

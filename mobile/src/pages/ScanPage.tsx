@@ -7,6 +7,8 @@ import CameraScannerModal from '../components/CameraScannerModal';
 interface ScanPageProps {
   shipments: ShipmentProgress[];
   recentScans: RecentScan[];
+  lastScan: ScanResponse | null;
+  onSetLastScan: (scan: ScanResponse | null) => void;
   onRefreshShipments: () => void;
   onNavigateToSetup: () => void;
   onNavigateToShipments: () => void;
@@ -15,12 +17,13 @@ interface ScanPageProps {
 export default function ScanPage({
   shipments,
   recentScans,
+  lastScan,
+  onSetLastScan,
   onRefreshShipments,
   onNavigateToSetup,
   onNavigateToShipments,
 }: ScanPageProps) {
   const [scanValue, setScanValue] = useState<string>('');
-  const [lastScan, setLastScan] = useState<ScanResponse | null>(null);
   const [isScanning, setIsScanning] = useState<boolean>(false);
   const [showCamera, setShowCamera] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
@@ -45,7 +48,7 @@ export default function ScanPage({
 
     try {
       const result = await api.scan(trimmed);
-      setLastScan(result);
+      onSetLastScan(result);
 
       // Ses & Titreşim
       if (result.is_complete && result.success) {
@@ -63,9 +66,9 @@ export default function ScanPage({
 
       onRefreshShipments();
 
-      // Banner'ı 3 saniye sonra yumuşakça gizle
+      // Banner'ı 3.5 saniye sonra gizle
       setTimeout(() => {
-        setLastScan((prev) => (prev?.label === result.label ? null : prev));
+        onSetLastScan(null);
       }, 3500);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Okutma sırasında hata oluştu';
@@ -76,7 +79,8 @@ export default function ScanPage({
       setScanValue('');
       focusInput();
     }
-  }, [focusInput, onRefreshShipments]);
+  }, [focusInput, onRefreshShipments, onSetLastScan]);
+
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

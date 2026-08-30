@@ -178,6 +178,18 @@ export default function OperationPage() {
       const scanData = d.scan as ScanResponse;
       setLastScan(scanData);
 
+      // Ses efekti çal
+      try {
+        if (scanData.is_complete && scanData.success) {
+          playScanSound('COMPLETE');
+        } else {
+          playScanSound(scanData.result as ScanResultType);
+        }
+      } catch {
+        // audio context user interaction needed
+      }
+
+
       // Son Okutmalar listesine ekle
       setRecentScans(prev => [{
         label: scanData.label,
@@ -187,9 +199,12 @@ export default function OperationPage() {
         time: new Date().toLocaleTimeString('tr-TR'),
       }, ...prev].slice(0, 30));
 
-      // Bildirim banner'ını belirli süre sonra kaldır
-      setTimeout(() => setLastScan(null), 1200);
+      // Bildirim banner'ını 3.5 saniye göster
+      setTimeout(() => {
+        setLastScan(prev => prev?.label === scanData.label ? null : prev);
+      }, 3500);
     }
+
 
     // Okutma veya undo sonrası genişletilmiş sevkiyatın etiketlerini güncelle
     if ((msg.event === 'scan' || msg.event === 'undo') && expandedId != null) {

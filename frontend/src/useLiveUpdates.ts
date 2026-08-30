@@ -1,15 +1,17 @@
 import { useEffect, useRef, useCallback } from 'react';
+import { getApiBase } from './api';
 
-const API_BASE = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '').replace(/\/api(\/v\d+)?$/i, '');
-
-function getWsUrl(): string {
-  if (API_BASE) {
-    // Render / Production: https://xxx.onrender.com → wss://xxx.onrender.com/ws
-    return API_BASE.replace(/^http/, 'ws') + '/ws';
+export function getWsUrl(): string {
+  const base = getApiBase();
+  if (base) {
+    // Render / Production: https://xxx.rfqcollector.com → wss://xxx.rfqcollector.com/ws
+    return base.replace(/^http/, 'ws') + '/ws';
   }
-  // Local development: ws://localhost:8001/ws (aynı origin)
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${window.location.host}/ws`;
+  if (typeof window !== 'undefined') {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${window.location.host}/ws`;
+  }
+  return 'wss://sevkbulapi.rfqcollector.com/ws';
 }
 
 export type WsEventType = 'scan' | 'undo' | 'reset' | 'find' | 'target_add' | 'target_clear' | 'target_import' | 'stock_import';

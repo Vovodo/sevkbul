@@ -1,11 +1,22 @@
-function getApiBase(): string {
+const PRODUCTION_API = 'https://sevkbulapi.rfqcollector.com';
+
+export function getApiBase(): string {
   let url = (import.meta.env.VITE_API_URL || '').trim();
-  url = url.replace(/\/+$/, '');
-  url = url.replace(/\/api(\/v\d+)?$/i, '');
-  return url;
+  if (url) {
+    url = url.replace(/\/+$/, '');
+    url = url.replace(/\/api(\/v\d+)?$/i, '');
+    return url;
+  }
+  if (typeof window !== 'undefined') {
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      return '';
+    }
+  }
+  return PRODUCTION_API;
 }
 
-const API_BASE = getApiBase();
+export const API_BASE = getApiBase();
+
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, options);
