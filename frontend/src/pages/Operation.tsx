@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { api, ShipmentProgress, ScanResponse, ShipmentTarget, RecentScan } from '../api';
+import { api, ShipmentGroup, ShipmentProgress, ScanResponse, ShipmentTarget, RecentScan } from '../api';
 import { playScanSound, getResultStyle, initAudio, ScanResultType } from '../audio';
 import SoundSettings from '../components/SoundSettings';
 import ManifestModal from '../components/ManifestModal';
@@ -19,14 +19,13 @@ export default function OperationPage() {
   const [stockLoaded, setStockLoaded] = useState(false);
   const [stockCount, setStockCount] = useState(0);
   const [targets, setTargets] = useState<ShipmentTarget[]>([]);
-  const [shipments, setShipments] = useState<ShipmentProgress[]>([]);
-  const [selectedShipmentId, setSelectedShipmentId] = useState<number | null>(null);
+  const [groups, setGroups] = useState<ShipmentGroup[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
   const [manualRef, setManualRef] = useState('');
   const [manualQty, setManualQty] = useState('');
   const [scanValue, setScanValue] = useState('');
   const [lastScan, setLastScan] = useState<ScanResponse | null>(null);
   const [recentScans, setRecentScans] = useState<RecentScan[]>([]);
-  const [expandedId, setExpandedId] = useState<number | null>(null);
   const [loading, setLoading] = useState('');
   const [error, setError] = useState('');
   const [hourlyFifo, setHourlyFifo] = useState<boolean>(() => {
@@ -35,19 +34,19 @@ export default function OperationPage() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Aktif seçili sevkiyatı otomatik belirle
+  // Aktif seçili sevkiyat grubunu otomatik belirle
   useEffect(() => {
-    if (shipments.length > 0) {
-      if (selectedShipmentId == null || !shipments.some(s => s.shipment_id === selectedShipmentId)) {
-        const firstIncomplete = shipments.find(s => !s.is_complete && s.scanned_quantity < s.requested_quantity) || shipments[0];
-        setSelectedShipmentId(firstIncomplete.shipment_id);
+    if (groups.length > 0) {
+      if (selectedGroupId == null || !groups.some(g => g.group_id === selectedGroupId)) {
+        const firstIncomplete = groups.find(g => !g.is_complete && g.scanned_quantity < g.requested_quantity) || groups[0];
+        setSelectedGroupId(firstIncomplete.group_id);
       }
     } else {
-      setSelectedShipmentId(null);
+      setSelectedGroupId(null);
     }
-  }, [shipments, selectedShipmentId]);
+  }, [groups, selectedGroupId]);
 
-  const isScanning = phase === 'scanning' && shipments.length > 0;
+  const isScanning = phase === 'scanning' && groups.length > 0;
 
   const focusScanInput = useCallback(() => {
     if (!isScanning) return;
@@ -134,9 +133,9 @@ export default function OperationPage() {
       setStockCount(s.total_labels);
     }).catch(() => {});
     api.getTargets().then(setTargets).catch(() => {});
-    api.getShipmentStatus().then(s => {
-      if (s.length > 0) {
-        setShipments(s);
+    api.getGroups().then(g => {
+      if (g.length > 0) {
+        setGroups(g);
         setPhase('scanning');
         setShowSetup(false);
       }
@@ -160,13 +159,11 @@ export default function OperationPage() {
 
     if (msg.event === 'reset') {
       // Başka bir kullanıcı sevkiyatı sıfırladı
-      setShipments([]);
+      setGroups([]);
       setPhase('setup');
       setShowSetup(true);
-      setExpandedId(null);
       setRecentScans([]);
       setLastScan(null);
-      // Hedefleri de güncelle
       if (d?.targets) {
         setTargets(d.targets);
       }
@@ -174,10 +171,10 @@ export default function OperationPage() {
     }
 
     // Tüm diğer olaylarda (scan, undo, find, target_add, target_import, target_clear)
-    // Backend her zaman güncel shipments ve targets listesini gönderir
-    if (d?.shipments) {
-      setShipments(d.shipments);
-      if (d.shipments.length > 0 && phase === 'setup') {
+    // Backend her zaman güncel groups ve targets listesini gönderir
+    if (d?.groups) {
+      setGroups(d.groups);
+      if (d.groups.length > 0 && phase === 'setup') {
         setPhase('scanning');
         setShowSetup(false);
       }
@@ -203,7 +200,6 @@ export default function OperationPage() {
         // audio context user interaction needed
       }
 
-
       // Son Okutmalar listesine ekle
       setRecentScans(prev => [{
         label: scanData.label,
@@ -218,7 +214,7 @@ export default function OperationPage() {
         setLastScan(prev => prev?.label === scanData.label ? null : prev);
       }, 3500);
     }
-  }, [phase, expandedId]);
+  }, [phase]);
 
   useLiveUpdates(handleWsMessage);
 
@@ -267,14 +263,10 @@ export default function OperationPage() {
     setError('');
     try {
       const r = await api.findShipments(hourlyFifo);
-      // Yeni sevkiyatları mevcut listeye ekle (FIFO devamlılığı: önceki sevkiyatlar korunur)
-      setShipments(prev => {
-        const existingIds = new Set(prev.map(s => s.shipment_id));
-        const newOnes = r.shipments.filter(s => !existingIds.has(s.shipment_id));
-        return [...prev, ...newOnes];
-      });
+      const updatedGroups = await api.getGroups();
+      setGroups(updatedGroups);
       setTargets([]);
-      if (r.shipments.length > 0) {
+      if (updatedGroups.length > 0) {
         setPhase('scanning');
         setShowSetup(false);
       }
@@ -291,10 +283,9 @@ export default function OperationPage() {
     setError('');
     try {
       await api.resetShipments();
-      setShipments([]);
+      setGroups([]);
       setPhase('setup');
       setShowSetup(true);
-      setExpandedId(null);
       setRecentScans([]);
       setLastScan(null);
     } catch (e: unknown) {
@@ -304,20 +295,23 @@ export default function OperationPage() {
     }
   };
 
-  const refreshStatus = () => {
-    api.getShipmentStatus().then(setShipments).catch(() => {});
-  };
-
   const handleUndoScan = async (shipmentId: number, label: string) => {
     if (!window.confirm(`${label} okutmasını kaldırmak istiyor musunuz?`)) return;
     setError('');
     try {
-      const updated = await api.undoScan(shipmentId, label);
-      setShipments(prev => prev.map(s => s.shipment_id === shipmentId ? updated : s));
+      await api.undoScan(shipmentId, label);
+      const updated = await api.getGroups();
+      setGroups(updated);
       setRecentScans(prev => prev.filter(s => !(s.label === label && s.result === 'SEVKİYAT ÜRÜNÜ')));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Okutma kaldırılamadı');
     }
+  };
+
+  const handleRenameGroup = (groupId: number, name: string) => {
+    setGroups(prev => prev.map(g =>
+      g.group_id === groupId ? { ...g, name: name || `${g.index}. Sevkiyat` } : g
+    ));
   };
 
   const handleScan = useCallback(async (label: string) => {
@@ -325,7 +319,7 @@ export default function OperationPage() {
     if (!trimmed) return;
 
     try {
-      const result = await api.scan(trimmed, selectedShipmentId);
+      const result = await api.scan(trimmed, null, selectedGroupId);
       setLastScan(result);
       playScanSound(result.result as ScanResultType);
 
@@ -335,15 +329,13 @@ export default function OperationPage() {
       }
 
       setTimeout(() => setLastScan(null), 1200);
-      // NOT: recentScans, shipments ve scannedLabels güncellemesi
-      // WebSocket handler tarafından yapılır (çift log önlenir)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Okutma hatası');
     } finally {
       setScanValue('');
       focusScanInput();
     }
-  }, [focusScanInput, selectedShipmentId]);
+  }, [focusScanInput, selectedGroupId]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -354,12 +346,6 @@ export default function OperationPage() {
 
   const resultStyle = lastScan ? getResultStyle(lastScan.result) : null;
 
-  const statusLabel = (s: ShipmentProgress) => {
-    if (s.is_complete || s.status === 'completed') return 'TAMAMLANDI';
-    if (s.scanned_quantity > 0) return 'DEVAM EDİYOR';
-    return 'BEKLİYOR';
-  };
-
   return (
     <div className="op-page">
       <header className="op-header">
@@ -369,7 +355,7 @@ export default function OperationPage() {
         </div>
         <div className="op-header-actions">
 
-          {shipments.length > 0 && (
+          {groups.length > 0 && (
             <button
               type="button"
               className="op-btn primary compact"
@@ -411,7 +397,7 @@ export default function OperationPage() {
 
       {error && <div className="op-alert error">{error}</div>}
 
-      {(showSetup || shipments.length === 0) && (
+      {(showSetup || groups.length === 0) && (
         <section className="op-section">
           <div className="op-row">
             <div className="op-field">
@@ -492,7 +478,7 @@ export default function OperationPage() {
             </button>
           </div>
 
-          {shipments.length > 0 && (
+          {groups.length > 0 && (
             <div style={{
               background: 'rgba(59, 130, 246, 0.08)',
               border: '1px solid rgba(59, 130, 246, 0.25)',
@@ -505,7 +491,7 @@ export default function OperationPage() {
               gap: '0.5rem',
               marginBottom: '0.5rem',
             }}>
-              ⚡ <span><strong>FIFO Devam Modu:</strong> {shipments.length} aktif sevkiyat var. Yeni sevkiyat önceki FIFO tahsislerinden devam eder. Sıfırlamak için <strong>Sevkiyatı Sıfırla</strong> butonunu kullanın.</span>
+              ⚡ <span><strong>FIFO Devam Modu:</strong> {groups.length} aktif sevkiyat grubu var. Yeni sevkiyat önceki FIFO tahsislerinden devam eder. Sıfırlamak için <strong>Sevkiyatı Sıfırla</strong> butonunu kullanın.</span>
             </div>
           )}
 
@@ -514,15 +500,15 @@ export default function OperationPage() {
             onClick={handleFind}
             disabled={loading === 'find' || !stockLoaded || targets.length === 0}
           >
-            {loading === 'find' ? 'Hesaplanıyor...' : shipments.length > 0 ? '+ YENİ SEVKİYAT EKLE (FIFO DEVAM)' : 'SEVKİYATI BUL'}
+            {loading === 'find' ? 'Hesaplanıyor...' : groups.length > 0 ? '+ YENİ SEVKİYAT EKLE (FIFO DEVAM)' : 'SEVKİYATI BUL'}
           </button>
         </section>
       )}
 
-      {shipments.length > 0 && (
+      {groups.length > 0 && (
         <section className="op-section">
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-            <h2 style={{ margin: 0 }}>SEVKİYATLAR ({shipments.length})</h2>
+            <h2 style={{ margin: 0 }}>SEVKİYATLAR ({groups.length})</h2>
             <button
               className="op-btn secondary compact"
               type="button"
@@ -532,22 +518,18 @@ export default function OperationPage() {
             </button>
           </div>
           <div className="op-shipment-table">
-            {shipments.map((s, idx) => (
+            {groups.map((g, idx) => (
               <ShipmentCard
-                key={s.shipment_id}
-                shipment={s}
+                key={g.group_id}
+                group={g}
                 index={idx + 1}
-                isSelected={selectedShipmentId === s.shipment_id}
+                isSelected={selectedGroupId === g.group_id}
                 onSelect={() => {
-                  setSelectedShipmentId(s.shipment_id);
+                  setSelectedGroupId(g.group_id);
                   focusScanInput();
                 }}
                 onUndoScan={handleUndoScan}
-                onRename={(id, name) => {
-                  setShipments(prev => prev.map(sh =>
-                    sh.shipment_id === id ? { ...sh, name: name || null } : sh
-                  ));
-                }}
+                onRenameGroup={handleRenameGroup}
               />
             ))}
           </div>
@@ -558,10 +540,10 @@ export default function OperationPage() {
         <section className="op-section scan-section">
           {/* Aktif Seçili Sevkiyat Hedefi Banner */}
           {(() => {
-            const activeShipment = shipments.find(s => s.shipment_id === selectedShipmentId) || shipments[0];
-            const activeIdx = shipments.findIndex(s => s.shipment_id === activeShipment?.shipment_id);
-            const activeTitle = activeShipment?.name || `${activeIdx + 1}. Sevkiyat`;
-            const isDone = activeShipment?.is_complete || activeShipment?.scanned_quantity >= activeShipment?.requested_quantity;
+            const activeGroup = groups.find(g => g.group_id === selectedGroupId) || groups[0];
+            const activeIdx = groups.findIndex(g => g.group_id === activeGroup?.group_id);
+            const activeTitle = activeGroup?.name || `${activeIdx + 1}. Sevkiyat`;
+            const isDone = activeGroup?.is_complete || activeGroup?.scanned_quantity >= activeGroup?.requested_quantity;
 
             return (
               <div className="op-active-target-box">
@@ -569,27 +551,27 @@ export default function OperationPage() {
                   <div className="op-active-target-badge">
                     <span>🎯 OKUTULAN HEDEF SEVKİYAT:</span>
                     <strong>{activeTitle}</strong>
-                    <span className="op-active-target-ref">({activeShipment?.reference} • {activeShipment?.scanned_quantity}/{activeShipment?.requested_quantity} adet)</span>
+                    <span className="op-active-target-ref">({activeGroup?.items.length} Referans • {activeGroup?.scanned_quantity}/{activeGroup?.requested_quantity} adet)</span>
                     {isDone && <span className="op-done-tag">TAMAMLANDI ✓</span>}
                   </div>
 
-                  {shipments.length > 1 && (
+                  {groups.length > 1 && (
                     <div className="op-target-switch-group">
                       <span style={{ fontSize: '0.78rem', color: '#9ca3af', marginRight: '4px' }}>Hedefi Değiştir:</span>
-                      {shipments.map((s, idx) => {
-                        const sTitle = s.name || `${idx + 1}. Sevkiyat`;
-                        const isSel = selectedShipmentId === s.shipment_id;
+                      {groups.map((g, idx) => {
+                        const gTitle = g.name || `${idx + 1}. Sevkiyat`;
+                        const isSel = selectedGroupId === g.group_id;
                         return (
                           <button
-                            key={s.shipment_id}
+                            key={g.group_id}
                             type="button"
                             className={`op-target-switch-btn ${isSel ? 'active' : ''}`}
                             onClick={() => {
-                              setSelectedShipmentId(s.shipment_id);
+                              setSelectedGroupId(g.group_id);
                               focusScanInput();
                             }}
                           >
-                            {isSel ? '🎯 ' : ''}{idx + 1}. {sTitle}
+                            {isSel ? '🎯 ' : ''}{idx + 1}. {gTitle}
                           </button>
                         );
                       })}

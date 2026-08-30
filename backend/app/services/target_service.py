@@ -1,6 +1,7 @@
 from decimal import Decimal
 from dataclasses import dataclass
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import ShipmentTarget, InventoryLabel, Shipment, ShipmentStatus
@@ -70,16 +71,23 @@ def find_shipments(db: Session, hourly_fifo: bool = False) -> list[dict]:
     # NOT: Önceki sevkiyatlar artık iptal edilmiyor.
     # FIFO devamlılığı sayesinde yeni sevkiyatlar kaldığı yerden başlar.
 
+    # Bu batch'teki tüm referanslar TEK BİR SEVKİYAT GRUBU'na aittir (1. Sevkiyat, 2. Sevkiyat...)
+    max_gid = db.query(func.max(Shipment.group_id)).scalar()
+    next_group_id = (max_gid or 0) + 1
+    group_name = f"{next_group_id}. Sevkiyat"
+
     results = []
     errors = []
 
     for t in targets:
         try:
             created = create_shipment_from_reference(
-                db, t.reference, t.target_quantity, hourly_fifo=hourly_fifo
+                db, t.reference, t.target_quantity, hourly_fifo=hourly_fifo,
+                group_id=next_group_id, group_name=group_name
             )
             results.append({
                 "shipment_id": created.shipment_id,
+                "group_id": next_group_id,
                 "reference": created.reference,
                 "requested_quantity": float(created.requested_quantity),
                 "pool_quantity": float(created.pool_quantity),
@@ -97,4 +105,5 @@ def find_shipments(db: Session, hourly_fifo: bool = False) -> list[dict]:
 
     lookup_cache.rebuild_global_index()
 
-    return {"shipments": results, "errors": errors}
+    from app.services.shipment_service import get_shipment_groups
+    return {"shipments": results, "groups": get_shipment_groups(db), "errors": errors}

@@ -14,13 +14,13 @@ import {
   ListOrdered,
   ScanLine,
 } from 'lucide-react';
-import { api, ShipmentProgress, ScannedLabel, ShipmentManifestItem } from '../api';
+import { api, ShipmentGroup, ShipmentProgress, ScannedLabel, ShipmentManifestItem } from '../api';
 import { triggerTapHaptic } from '../audio/audioEngine';
 
 interface ShipmentsPageProps {
-  shipments: ShipmentProgress[];
-  selectedShipmentId?: number | null;
-  onSelectShipment?: (id: number) => void;
+  groups: ShipmentGroup[];
+  selectedGroupId?: number | null;
+  onSelectGroup?: (id: number) => void;
   onRefresh: () => void;
   onResetShipments: () => Promise<void>;
   onNavigateToManifest: () => void;
@@ -28,15 +28,16 @@ interface ShipmentsPageProps {
 }
 
 export default function ShipmentsPage({
-  shipments,
-  selectedShipmentId,
-  onSelectShipment,
+  groups,
+  selectedGroupId,
+  onSelectGroup,
   onRefresh,
   onResetShipments,
   onNavigateToManifest,
   onNavigateToSetup,
 }: ShipmentsPageProps) {
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [expandedGroupId, setExpandedGroupId] = useState<number | null>(null);
+  const [expandedRefId, setExpandedRefId] = useState<number | null>(null);
   const [activeTabMap, setActiveTabMap] = useState<Record<number, 'scanned' | 'fifo'>>({});
   const [scannedMap, setScannedMap] = useState<Record<number, ScannedLabel[]>>({});
   const [fifoMap, setFifoMap] = useState<Record<number, ShipmentManifestItem[]>>({});
@@ -44,17 +45,17 @@ export default function ShipmentsPage({
   const [isResetting, setIsResetting] = useState<boolean>(false);
   const [undoError, setUndoError] = useState<string>('');
 
-  // Editing state for shipment names
-  const [editingId, setEditingId] = useState<number | null>(null);
+  // Editing state for group names
+  const [editingGroupId, setEditingGroupId] = useState<number | null>(null);
   const [editNameValue, setEditNameValue] = useState<string>('');
   const [isSavingName, setIsSavingName] = useState<boolean>(false);
   const editInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (editingId != null) {
+    if (editingGroupId != null) {
       setTimeout(() => editInputRef.current?.focus(), 50);
     }
-  }, [editingId]);
+  }, [editingGroupId]);
 
   const loadScannedLabels = async (shipmentId: number) => {
     try {
@@ -75,12 +76,17 @@ export default function ShipmentsPage({
     }
   };
 
-  const toggleExpand = (shipmentId: number) => {
+  const toggleGroupExpand = (groupId: number) => {
     void triggerTapHaptic();
-    if (expandedId === shipmentId) {
-      setExpandedId(null);
+    setExpandedGroupId((prev) => (prev === groupId ? null : groupId));
+  };
+
+  const toggleRefExpand = (shipmentId: number) => {
+    void triggerTapHaptic();
+    if (expandedRefId === shipmentId) {
+      setExpandedRefId(null);
     } else {
-      setExpandedId(shipmentId);
+      setExpandedRefId(shipmentId);
       if (!activeTabMap[shipmentId]) {
         setActiveTabMap((prev) => ({ ...prev, [shipmentId]: 'scanned' }));
       }
@@ -91,27 +97,27 @@ export default function ShipmentsPage({
     }
   };
 
-  const handleStartEdit = (shipment: ShipmentProgress, e: React.MouseEvent) => {
+  const handleStartEdit = (group: ShipmentGroup, e: React.MouseEvent) => {
     e.stopPropagation();
     void triggerTapHaptic();
-    setEditingId(shipment.shipment_id);
-    setEditNameValue(shipment.name || '');
+    setEditingGroupId(group.group_id);
+    setEditNameValue(group.name || '');
   };
 
   const handleCancelEdit = (e?: React.MouseEvent) => {
     e?.stopPropagation();
-    setEditingId(null);
+    setEditingGroupId(null);
     setEditNameValue('');
   };
 
-  const handleSaveEdit = async (shipmentId: number, e?: React.MouseEvent | React.KeyboardEvent) => {
+  const handleSaveEdit = async (groupId: number, e?: React.MouseEvent | React.KeyboardEvent) => {
     e?.stopPropagation();
     void triggerTapHaptic();
     if (isSavingName) return;
     setIsSavingName(true);
     try {
-      await api.renameShipment(shipmentId, editNameValue.trim());
-      setEditingId(null);
+      await api.renameGroup(groupId, editNameValue.trim());
+      setEditingGroupId(null);
       onRefresh();
     } catch (err: unknown) {
       setUndoError(err instanceof Error ? err.message : 'İsim güncellenemedi');
@@ -153,7 +159,7 @@ export default function ShipmentsPage({
       {/* Top Header Actions */}
       <div className="page-section-header">
         <div>
-          <h2>Sevkiyatlar ({shipments.length})</h2>
+          <h2>Sevkiyatlar ({groups.length})</h2>
           <span className="page-section-desc">FIFO devamlılığı ile çoklu yönetim</span>
         </div>
         <div className="header-action-group" style={{ display: 'flex', gap: '0.4rem' }}>
@@ -171,7 +177,7 @@ export default function ShipmentsPage({
               <span>Yeni Sevkiyat</span>
             </button>
           )}
-          {shipments.length > 0 && (
+          {groups.length > 0 && (
             <button
               type="button"
               className="mobile-btn danger small"
@@ -193,7 +199,7 @@ export default function ShipmentsPage({
         </div>
       )}
 
-      {shipments.length === 0 ? (
+      {groups.length === 0 ? (
         <div className="empty-state-card">
           <div className="empty-icon">📦</div>
           <h3>Aktif Sevkiyat Yok</h3>
@@ -212,22 +218,17 @@ export default function ShipmentsPage({
         </div>
       ) : (
         <div className="shipments-list">
-          {shipments.map((s, index) => {
-            const isDone = s.is_complete || s.scanned_quantity >= s.requested_quantity;
-            const isExpanded = expandedId === s.shipment_id;
-            const isEditing = editingId === s.shipment_id;
-            const currentTab = activeTabMap[s.shipment_id] || 'scanned';
-            const scannedItems = scannedMap[s.shipment_id] || [];
-            const fifoItems = fifoMap[s.shipment_id] || [];
-            const isLoadingDetails = loadingMap[s.shipment_id];
-            const progressRatio = s.requested_quantity > 0 ? (s.scanned_quantity / s.requested_quantity) * 100 : 0;
-            const displayName = s.name || `${index + 1}. Sevkiyat`;
-
-            const isSelected = selectedShipmentId === s.shipment_id;
+          {groups.map((g, index) => {
+            const isDone = g.is_complete || g.scanned_quantity >= g.requested_quantity;
+            const isExpanded = expandedGroupId === g.group_id;
+            const isEditing = editingGroupId === g.group_id;
+            const progressRatio = g.requested_quantity > 0 ? (g.scanned_quantity / g.requested_quantity) * 100 : 0;
+            const displayName = g.name || `${index + 1}. Sevkiyat`;
+            const isSelected = selectedGroupId === g.group_id;
 
             return (
-              <div key={s.shipment_id} className={`shipment-card ${isDone ? 'is-complete' : 'is-active'} ${isSelected ? 'is-selected' : ''}`}>
-                <div className="shipment-card-main" onClick={() => toggleExpand(s.shipment_id)}>
+              <div key={g.group_id} className={`shipment-card ${isDone ? 'is-complete' : 'is-active'} ${isSelected ? 'is-selected' : ''}`}>
+                <div className="shipment-card-main" onClick={() => toggleGroupExpand(g.group_id)}>
                   {/* Top Card Row: Index + Title/Edit + Status */}
                   <div className="card-top-row">
                     <div className="ref-name-wrap" style={{ flex: 1, minWidth: 0 }}>
@@ -258,7 +259,7 @@ export default function ShipmentsPage({
                               value={editNameValue}
                               onChange={(e) => setEditNameValue(e.target.value)}
                               onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleSaveEdit(s.shipment_id, e);
+                                if (e.key === 'Enter') handleSaveEdit(g.group_id, e);
                                 if (e.key === 'Escape') handleCancelEdit();
                               }}
                               placeholder={`${index + 1}. Sevkiyat`}
@@ -276,7 +277,7 @@ export default function ShipmentsPage({
                             />
                             <button
                               type="button"
-                              onClick={(e) => handleSaveEdit(s.shipment_id, e)}
+                              onClick={(e) => handleSaveEdit(g.group_id, e)}
                               disabled={isSavingName}
                               style={{
                                 background: 'var(--success)',
@@ -320,7 +321,7 @@ export default function ShipmentsPage({
                             </strong>
                             <button
                               type="button"
-                              onClick={(e) => handleStartEdit(s, e)}
+                              onClick={(e) => handleStartEdit(g, e)}
                               title="İsmi Düzenle"
                               style={{
                                 background: 'transparent',
@@ -338,10 +339,10 @@ export default function ShipmentsPage({
                         )}
                       </div>
 
-                      {/* Reference code */}
+                      {/* Reference count and status */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <span className="ref-title" style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                          {s.reference}
+                          {g.items.length} Referans
                         </span>
                         <span className={`status-pill ${isDone ? 'pill-done' : 'pill-active'}`}>
                           {isDone ? <CheckCircle2 size={11} /> : <Clock size={11} />}
@@ -351,13 +352,13 @@ export default function ShipmentsPage({
                     </div>
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      {onSelectShipment && (
+                      {onSelectGroup && (
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             void triggerTapHaptic();
-                            onSelectShipment(s.shipment_id);
+                            onSelectGroup(g.group_id);
                           }}
                           style={{
                             background: isSelected ? '#2563eb' : 'var(--surface2)',
@@ -383,8 +384,8 @@ export default function ShipmentsPage({
                   {/* Progress Bar & Counters */}
                   <div className="card-progress-section">
                     <div className="progress-labels">
-                      <span>Okutulan: <strong>{s.scanned_quantity} Adet</strong></span>
-                      <span>Hedef: <strong>{s.requested_quantity} Adet</strong></span>
+                      <span>Toplam Okutulan: <strong>{g.scanned_quantity} Adet</strong></span>
+                      <span>Hedef: <strong>{g.requested_quantity} Adet</strong></span>
                     </div>
                     <div className="mobile-progress-track">
                       <div
@@ -395,151 +396,223 @@ export default function ShipmentsPage({
                   </div>
                 </div>
 
-                {/* Expanded Drawer (Scanned + FIFO Pool views) */}
+                {/* Expanded Drawer: All References in this group */}
                 {isExpanded && (
-                  <div className="scanned-items-drawer">
-                    {/* Sub-tab buttons */}
-                    <div
-                      style={{
-                        display: 'flex',
-                        gap: '0.4rem',
-                        marginBottom: '0.65rem',
-                        borderBottom: '1px solid var(--border)',
-                        paddingBottom: '0.5rem',
-                      }}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setActiveTabMap((prev) => ({ ...prev, [s.shipment_id]: 'scanned' }))}
-                        style={{
-                          flex: 1,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '0.3rem',
-                          padding: '0.4rem 0.6rem',
-                          borderRadius: '6px',
-                          border: currentTab === 'scanned' ? '1px solid var(--primary)' : '1px solid transparent',
-                          background: currentTab === 'scanned' ? 'rgba(59, 130, 246, 0.15)' : 'transparent',
-                          color: currentTab === 'scanned' ? 'var(--primary)' : 'var(--muted)',
-                          fontSize: '0.75rem',
-                          fontWeight: 700,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        <ScanLine size={13} />
-                        <span>Okutulanlar ({scannedItems.length})</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setActiveTabMap((prev) => ({ ...prev, [s.shipment_id]: 'fifo' }))}
-                        style={{
-                          flex: 1,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '0.3rem',
-                          padding: '0.4rem 0.6rem',
-                          borderRadius: '6px',
-                          border: currentTab === 'fifo' ? '1px solid var(--primary)' : '1px solid transparent',
-                          background: currentTab === 'fifo' ? 'rgba(59, 130, 246, 0.15)' : 'transparent',
-                          color: currentTab === 'fifo' ? 'var(--primary)' : 'var(--muted)',
-                          fontSize: '0.75rem',
-                          fontWeight: 700,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        <ListOrdered size={13} />
-                        <span>FIFO Havuzu ({fifoItems.length})</span>
-                      </button>
+                  <div className="scanned-items-drawer" style={{ background: 'rgba(0,0,0,0.2)', padding: '0.75rem' }}>
+                    <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--muted)', marginBottom: '0.5rem' }}>
+                      REFERANSLAR ({g.items.length})
                     </div>
 
-                    {isLoadingDetails ? (
-                      <div className="drawer-loading">Yükleniyor...</div>
-                    ) : currentTab === 'scanned' ? (
-                      /* Tab 1: Okutulan Etiketler */
-                      <div>
-                        {scannedItems.length === 0 ? (
-                          <div className="drawer-empty">Bu sevkiyat için henüz etiket okutulmadı</div>
-                        ) : (
-                          <div className="scanned-tags-list">
-                            {scannedItems.map((item) => (
-                              <div key={item.label} className="scanned-tag-row">
-                                <div className="tag-info">
-                                  <span className="tag-label font-mono">{item.label}</span>
-                                  <div className="tag-meta">
-                                    <span className="tag-qty">{item.quantity} Adet</span>
-                                    {item.fifo_date && <span className="tag-date">FIFO: {item.fifo_date}</span>}
-                                  </div>
-                                </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      {g.items.map((item: ShipmentProgress) => {
+                        const itemDone = item.is_complete || item.scanned_quantity >= item.requested_quantity;
+                        const itemPct = item.requested_quantity > 0 ? (item.scanned_quantity / item.requested_quantity) * 100 : 0;
+                        const isRefOpen = expandedRefId === item.shipment_id;
+                        const currentTab = activeTabMap[item.shipment_id] || 'scanned';
+                        const scannedItems = scannedMap[item.shipment_id] || [];
+                        const fifoItems = fifoMap[item.shipment_id] || [];
+                        const isLoadingDetails = loadingMap[item.shipment_id];
 
-                                <button
-                                  type="button"
-                                  className="undo-btn"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleUndo(s.shipment_id, item.label);
-                                  }}
-                                  title="Etiketi Kaldır"
-                                >
-                                  <Trash2 size={14} />
-                                  <span>Kaldır</span>
-                                </button>
+                        return (
+                          <div
+                            key={item.shipment_id}
+                            style={{
+                              background: 'var(--surface2)',
+                              border: '1px solid var(--border)',
+                              borderRadius: '8px',
+                              overflow: 'hidden',
+                            }}
+                          >
+                            {/* Reference Item Header */}
+                            <div
+                              onClick={() => toggleRefExpand(item.shipment_id)}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                padding: '0.5rem 0.7rem',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flex: 1, minWidth: 0 }}>
+                                <span style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>
+                                  {isRefOpen ? '▼' : '▶'}
+                                </span>
+                                <strong className="font-mono" style={{ fontSize: '0.85rem', color: '#fff' }}>
+                                  {item.reference}
+                                </strong>
                               </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      /* Tab 2: FIFO Aday Listesi */
-                      <div>
-                        {fifoItems.length === 0 ? (
-                          <div className="drawer-empty">FIFO adayı bulunamadı</div>
-                        ) : (
-                          <div className="scanned-tags-list">
-                            {fifoItems.map((item) => (
-                              <div
-                                key={item.label}
-                                className="scanned-tag-row"
-                                style={{
-                                  borderLeft:
-                                    item.status === 'scanned'
-                                      ? '3px solid var(--success)'
-                                      : item.status === 'partial'
-                                      ? '3px solid var(--warning)'
-                                      : '3px solid var(--border)',
-                                }}
-                              >
-                                <div className="tag-info">
-                                  <span className="tag-label font-mono">{item.label}</span>
-                                  <div className="tag-meta">
-                                    <span className="tag-qty">{item.quantity} Adet</span>
-                                    {item.fifo_date && <span className="tag-date">FIFO: {item.fifo_date}</span>}
-                                  </div>
-                                </div>
 
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                                  {item.scanned_quantity} / {item.requested_quantity}
+                                </span>
                                 <span
-                                  style={{
-                                    fontSize: '0.7rem',
-                                    fontWeight: 700,
-                                    color:
-                                      item.status === 'scanned'
-                                        ? 'var(--success)'
-                                        : item.status === 'partial'
-                                        ? 'var(--warning)'
-                                        : 'var(--muted)',
-                                    whiteSpace: 'nowrap',
-                                  }}
+                                  className={`status-pill ${itemDone ? 'pill-done' : 'pill-active'}`}
+                                  style={{ fontSize: '0.65rem', padding: '1px 5px' }}
                                 >
-                                  {item.status === 'scanned' ? '✅ Okutuldu' : item.status === 'partial' ? '⚡ Kısmi' : '⏳ Bekliyor'}
+                                  {itemDone ? '✓' : `%${Math.round(itemPct)}`}
                                 </span>
                               </div>
-                            ))}
+                            </div>
+
+                            {/* Mini progress bar */}
+                            <div style={{ height: '2px', background: 'var(--border)', width: '100%' }}>
+                              <div
+                                style={{
+                                  height: '100%',
+                                  width: `${Math.min(itemPct, 100)}%`,
+                                  background: itemDone ? 'var(--success)' : 'var(--primary)',
+                                }}
+                              />
+                            </div>
+
+                            {/* Reference Details: Scanned / FIFO */}
+                            {isRefOpen && (
+                              <div style={{ padding: '0.6rem', borderTop: '1px solid var(--border)' }}>
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    gap: '0.35rem',
+                                    marginBottom: '0.5rem',
+                                  }}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => setActiveTabMap((prev) => ({ ...prev, [item.shipment_id]: 'scanned' }))}
+                                    style={{
+                                      flex: 1,
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      gap: '0.25rem',
+                                      padding: '0.35rem 0.5rem',
+                                      borderRadius: '6px',
+                                      border: currentTab === 'scanned' ? '1px solid var(--primary)' : '1px solid transparent',
+                                      background: currentTab === 'scanned' ? 'rgba(59, 130, 246, 0.15)' : 'transparent',
+                                      color: currentTab === 'scanned' ? 'var(--primary)' : 'var(--muted)',
+                                      fontSize: '0.72rem',
+                                      fontWeight: 700,
+                                      cursor: 'pointer',
+                                    }}
+                                  >
+                                    <ScanLine size={12} />
+                                    <span>Okutulanlar ({scannedItems.length})</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => setActiveTabMap((prev) => ({ ...prev, [item.shipment_id]: 'fifo' }))}
+                                    style={{
+                                      flex: 1,
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      gap: '0.25rem',
+                                      padding: '0.35rem 0.5rem',
+                                      borderRadius: '6px',
+                                      border: currentTab === 'fifo' ? '1px solid var(--primary)' : '1px solid transparent',
+                                      background: currentTab === 'fifo' ? 'rgba(59, 130, 246, 0.15)' : 'transparent',
+                                      color: currentTab === 'fifo' ? 'var(--primary)' : 'var(--muted)',
+                                      fontSize: '0.72rem',
+                                      fontWeight: 700,
+                                      cursor: 'pointer',
+                                    }}
+                                  >
+                                    <ListOrdered size={12} />
+                                    <span>FIFO Havuzu ({fifoItems.length})</span>
+                                  </button>
+                                </div>
+
+                                {isLoadingDetails ? (
+                                  <div className="drawer-loading" style={{ fontSize: '0.75rem' }}>Yükleniyor...</div>
+                                ) : currentTab === 'scanned' ? (
+                                  <div>
+                                    {scannedItems.length === 0 ? (
+                                      <div className="drawer-empty" style={{ fontSize: '0.75rem' }}>Henüz etiket okutulmadı</div>
+                                    ) : (
+                                      <div className="scanned-tags-list">
+                                        {scannedItems.map((sc) => (
+                                          <div key={sc.label} className="scanned-tag-row">
+                                            <div className="tag-info">
+                                              <span className="tag-label font-mono">{sc.label}</span>
+                                              <div className="tag-meta">
+                                                <span className="tag-qty">{sc.quantity} Adet</span>
+                                                {sc.fifo_date && <span className="tag-date">FIFO: {sc.fifo_date}</span>}
+                                              </div>
+                                            </div>
+
+                                            <button
+                                              type="button"
+                                              className="undo-btn"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleUndo(item.shipment_id, sc.label);
+                                              }}
+                                              title="Etiketi Kaldır"
+                                            >
+                                              <Trash2 size={13} />
+                                              <span>Kaldır</span>
+                                            </button>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <div>
+                                    {fifoItems.length === 0 ? (
+                                      <div className="drawer-empty" style={{ fontSize: '0.75rem' }}>FIFO adayı bulunamadı</div>
+                                    ) : (
+                                      <div className="scanned-tags-list">
+                                        {fifoItems.map((fItem) => (
+                                          <div
+                                            key={fItem.label}
+                                            className="scanned-tag-row"
+                                            style={{
+                                              borderLeft:
+                                                fItem.status === 'scanned'
+                                                  ? '3px solid var(--success)'
+                                                  : fItem.status === 'partial'
+                                                  ? '3px solid var(--warning)'
+                                                  : '3px solid var(--border)',
+                                            }}
+                                          >
+                                            <div className="tag-info">
+                                              <span className="tag-label font-mono">{fItem.label}</span>
+                                              <div className="tag-meta">
+                                                <span className="tag-qty">{fItem.quantity} Adet</span>
+                                                {fItem.fifo_date && <span className="tag-date">FIFO: {fItem.fifo_date}</span>}
+                                              </div>
+                                            </div>
+
+                                            <span
+                                              style={{
+                                                fontSize: '0.68rem',
+                                                fontWeight: 700,
+                                                color:
+                                                  fItem.status === 'scanned'
+                                                    ? 'var(--success)'
+                                                    : fItem.status === 'partial'
+                                                    ? 'var(--warning)'
+                                                    : 'var(--muted)',
+                                                whiteSpace: 'nowrap',
+                                              }}
+                                            >
+                                              {fItem.status === 'scanned' ? '✅ Okutuldu' : fItem.status === 'partial' ? '⚡ Kısmi' : '⏳ Bekliyor'}
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                    )}
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
               </div>

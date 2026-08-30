@@ -9,11 +9,14 @@ from app.schemas import (
     ShipmentFindResultSchema, ShipmentProgressSchema,
     ScanRequest, ScanResponseSchema, ScanLogSchema,
     ShipmentTargetImportResultSchema, RowErrorSchema, ScannedLabelSchema,
-    ShipmentManifestSchema,
+    ShipmentManifestSchema, ShipmentGroupSchema,
 )
 from app.services.target_service import list_targets, add_target, clear_targets, find_shipments
 from app.services.shipment_excel_import import import_shipment_targets_excel
-from app.services.shipment_service import get_active_shipments, get_shipment_progress, rename_shipment
+from app.services.shipment_service import (
+    get_active_shipments, get_shipment_progress, rename_shipment,
+    get_shipment_groups, rename_shipment_group,
+)
 from app.services.scan_service import process_global_scan
 from app.services.operation_service import (
     reset_active_shipments, get_scanned_labels, undo_scan, get_shipment_manifest
@@ -21,15 +24,17 @@ from app.services.operation_service import (
 from app.models import ScanLog, InventoryLabel
 from app.ws_manager import ws_manager
 
-router = APIRouter(prefix="/api/shipment", tags=["shipment"])
+router = APIRouter(prefix="/api/shipment", tags=["operation"])
 
 
-def _broadcast_full_status(db: Session, event: str, extra: dict | None = None):
+def _broadcast_full_status(db: Session, event: str = "sync", extra: dict | None = None):
     """Tüm bağlı istemcilere güncel sevkiyat durumunu broadcast et."""
     shipments = get_active_shipments(db)
+    groups = get_shipment_groups(db)
     status_list = [s if isinstance(s, dict) else s.model_dump() if hasattr(s, 'model_dump') else dict(s) for s in shipments]
     targets = [ShipmentTargetSchema(id=t.id, reference=t.reference, target_quantity=t.target_quantity).model_dump() for t in list_targets(db)]
     payload = {
+        "groups": groups,
         "shipments": status_list,
         "targets": targets,
     }
@@ -119,6 +124,11 @@ def shipment_status(db: Session = Depends(get_db)):
     return get_active_shipments(db)
 
 
+@router.get("/groups", response_model=list[ShipmentGroupSchema])
+def shipment_groups_status(db: Session = Depends(get_db)):
+    return get_shipment_groups(db)
+
+
 @router.get("/manifest", response_model=list[ShipmentManifestSchema])
 def shipment_manifest(db: Session = Depends(get_db)):
     """Aktif ve tamamlanmış tüm sevkiyatlar için sistemin hesapladığı tam manifest bilgisini döner."""
@@ -164,7 +174,8 @@ def remove_scan(shipment_id: int, label: str, db: Session = Depends(get_db)):
 @router.post("/scan", response_model=ScanResponseSchema)
 def global_scan(req: ScanRequest, db: Session = Depends(get_db)):
     try:
-        r = process_global_scan(db, req.label, target_shipment_id=req.shipment_id)
+        gid = req.group_id if req.group_id is not None else req.shipment_id
+        r = process_global_scan(db, req.label, target_shipment_id=req.shipment_id, target_group_id=gid)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     scan_result = ScanResponseSchema(
@@ -186,10 +197,21 @@ class _RenameRequest(_BaseModel):
 
 @router.patch("/{shipment_id}/name", response_model=ShipmentProgressSchema)
 def rename_shipment_endpoint(shipment_id: int, req: _RenameRequest, db: Session = Depends(get_db)):
-    """Sevkiyata kullanıcı dostu bir isim ver (ör. 'TIR-1 Yükleme')."""
+    """Sevkiyata veya gruba kullanıcı dostu bir isim ver (ör. 'TIR-1 Yükleme')."""
     try:
         progress = rename_shipment(db, shipment_id, req.name)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     _broadcast_full_status(db, "rename", {"shipment_id": shipment_id, "name": req.name})
     return ShipmentProgressSchema(**progress)
+
+
+@router.patch("/group/{group_id}/name", response_model=list[ShipmentGroupSchema])
+def rename_group_endpoint(group_id: int, req: _RenameRequest, db: Session = Depends(get_db)):
+    """Sevkiyat grubuna kullanıcı dostu bir isim ver (ör. 'TIR-1 Yükleme')."""
+    try:
+        groups = rename_shipment_group(db, group_id, req.name)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    _broadcast_full_status(db, "rename", {"group_id": group_id, "name": req.name})
+    return [ShipmentGroupSchema(**g) for g in groups]

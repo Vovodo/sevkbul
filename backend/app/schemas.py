@@ -49,6 +49,7 @@ class ShipmentCreateResponse(BaseModel):
 
 class ShipmentProgressSchema(BaseModel):
     shipment_id: int
+    group_id: int | None = None
     reference: str
     name: str | None = None
     requested_quantity: float
@@ -60,9 +61,24 @@ class ShipmentProgressSchema(BaseModel):
     is_complete: bool
 
 
+class ShipmentGroupSchema(BaseModel):
+    group_id: int
+    index: int = 1
+    name: str | None = None
+    requested_quantity: float
+    scanned_quantity: float
+    remaining_quantity: float
+    progress_percent: float = 0.0
+    status: str = "active"
+    is_complete: bool = False
+    created_at: str | None = None
+    items: list[ShipmentProgressSchema] = []
+
+
 class ScanRequest(BaseModel):
     label: str
     shipment_id: int | None = None
+    group_id: int | None = None
 
 
 class ScanResponseSchema(BaseModel):

@@ -72,6 +72,7 @@ export interface ShipmentTarget {
 
 export interface ShipmentProgress {
   shipment_id: number;
+  group_id?: number;
   reference: string;
   name?: string | null;
   requested_quantity: number;
@@ -81,6 +82,20 @@ export interface ShipmentProgress {
   progress_percent: number;
   status: string;
   is_complete: boolean;
+}
+
+export interface ShipmentGroup {
+  group_id: number;
+  index: number;
+  name: string;
+  requested_quantity: number;
+  scanned_quantity: number;
+  remaining_quantity: number;
+  progress_percent: number;
+  status: string;
+  is_complete: boolean;
+  created_at?: string | null;
+  items: ShipmentProgress[];
 }
 
 export interface ScanResponse {
@@ -186,13 +201,19 @@ export const api = {
 
   getShipmentStatus: () => request<ShipmentProgress[]>('/api/shipment/status'),
 
+  getGroups: () => request<ShipmentGroup[]>('/api/shipment/groups'),
+
   getManifest: () => request<ShipmentManifest[]>('/api/shipment/manifest'),
 
-  scan: (label: string, shipment_id?: number | null) =>
+  scan: (label: string, shipment_id?: number | null, group_id?: number | null) =>
     request<ScanResponse>('/api/shipment/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ label, shipment_id: shipment_id || null }),
+      body: JSON.stringify({
+        label,
+        shipment_id: shipment_id || null,
+        group_id: group_id || null,
+      }),
     }),
 
   resetShipments: () =>
@@ -208,6 +229,13 @@ export const api = {
 
   renameShipment: (shipmentId: number, name: string) =>
     request<ShipmentProgress>(`/api/shipment/${shipmentId}/name`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }),
+
+  renameGroup: (groupId: number, name: string) =>
+    request<ShipmentGroup[]>(`/api/shipment/group/${groupId}/name`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name }),

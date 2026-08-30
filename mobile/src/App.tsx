@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { api, ShipmentProgress, ShipmentTarget, RecentScan, ShipmentManifest, ScanResponse } from './api';
+import { api, ShipmentGroup, ShipmentTarget, RecentScan, ShipmentManifest, ScanResponse } from './api';
 import { useLiveUpdates, WsMessage } from './useLiveUpdates';
 import { playMobileSound } from './audio/audioEngine';
 import Header from './components/Header';
@@ -12,8 +12,8 @@ import ManifestPage from './pages/ManifestPage';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<MobileTab>('scan');
-  const [shipments, setShipments] = useState<ShipmentProgress[]>([]);
-  const [selectedShipmentId, setSelectedShipmentId] = useState<number | null>(null);
+  const [groups, setGroups] = useState<ShipmentGroup[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
   const [targets, setTargets] = useState<ShipmentTarget[]>([]);
   const [manifests, setManifests] = useState<ShipmentManifest[]>([]);
   const [recentScans, setRecentScans] = useState<RecentScan[]>([]);
@@ -22,34 +22,34 @@ export default function App() {
   const [stockCount, setStockCount] = useState<number>(0);
   const [showSoundModal, setShowSoundModal] = useState<boolean>(false);
 
-  // Aktif seçili sevkiyatı otomatik belirle
+  // Aktif seçili sevkiyat grubunu otomatik belirle
   useEffect(() => {
-    if (shipments.length > 0) {
-      if (selectedShipmentId == null || !shipments.some((s) => s.shipment_id === selectedShipmentId)) {
+    if (groups.length > 0) {
+      if (selectedGroupId == null || !groups.some((g) => g.group_id === selectedGroupId)) {
         const firstIncomplete =
-          shipments.find((s) => !s.is_complete && s.scanned_quantity < s.requested_quantity) || shipments[0];
-        setSelectedShipmentId(firstIncomplete.shipment_id);
+          groups.find((g) => !g.is_complete && g.scanned_quantity < g.requested_quantity) || groups[0];
+        setSelectedGroupId(firstIncomplete.group_id);
       }
     } else {
-      setSelectedShipmentId(null);
+      setSelectedGroupId(null);
     }
-  }, [shipments, selectedShipmentId]);
+  }, [groups, selectedGroupId]);
 
   // Initial Data Fetch
   const refreshAllData = useCallback(async () => {
     try {
-      const [stats, targetList, shipmentList] = await Promise.all([
+      const [stats, targetList, groupList] = await Promise.all([
         api.getInventoryStats().catch(() => ({ total_labels: 0, total_references: 0 })),
         api.getTargets().catch(() => []),
-        api.getShipmentStatus().catch(() => []),
+        api.getGroups().catch(() => []),
       ]);
 
       setStockLoaded(stats.total_labels > 0);
       setStockCount(stats.total_labels);
       setTargets(targetList);
-      setShipments(shipmentList);
+      setGroups(groupList);
 
-      if (shipmentList.length > 0) {
+      if (groupList.length > 0) {
         api.getManifest().then(setManifests).catch(() => {});
       }
     } catch {
@@ -74,7 +74,7 @@ export default function App() {
     }
 
     if (msg.event === 'reset') {
-      setShipments([]);
+      setGroups([]);
       setRecentScans([]);
       setManifests([]);
       setLastScan(null);
@@ -84,8 +84,8 @@ export default function App() {
       return;
     }
 
-    if (d?.shipments) {
-      setShipments(d.shipments);
+    if (d?.groups) {
+      setGroups(d.groups);
     }
 
     if (d?.targets) {
@@ -114,7 +114,6 @@ export default function App() {
       }
 
       setRecentScans((prev) => [
-
         {
           label: scanData.label,
           reference: scanData.reference,
@@ -134,7 +133,7 @@ export default function App() {
 
   const handleReset = async () => {
     await api.resetShipments();
-    setShipments([]);
+    setGroups([]);
     setRecentScans([]);
     setManifests([]);
     setLastScan(null);
@@ -142,17 +141,17 @@ export default function App() {
   };
 
   const handleShipmentsFound = async () => {
-    const status = await api.getShipmentStatus();
-    setShipments(status);
+    const groupList = await api.getGroups();
+    setGroups(groupList);
     setTargets([]);
     setActiveTab('scan');
     api.getManifest().then(setManifests).catch(() => {});
   };
 
-  const totalScanned = shipments.reduce((sum, s) => sum + s.scanned_quantity, 0);
-  const totalTarget = shipments.reduce((sum, s) => sum + s.requested_quantity, 0);
-  const unfulfilledShipmentsCount = shipments.filter(
-    (s) => !s.is_complete && s.scanned_quantity < s.requested_quantity
+  const totalScanned = groups.reduce((sum, g) => sum + g.scanned_quantity, 0);
+  const totalTarget = groups.reduce((sum, g) => sum + g.requested_quantity, 0);
+  const unfulfilledGroupsCount = groups.filter(
+    (g) => !g.is_complete && g.scanned_quantity < g.requested_quantity
   ).length;
 
   return (
@@ -160,7 +159,7 @@ export default function App() {
       {/* Mobile Top App Bar */}
       <Header
         wsConnected={isConnected}
-        activeShipmentCount={shipments.length}
+        activeShipmentCount={groups.length}
         totalProgress={{ scanned: totalScanned, target: totalTarget }}
         onOpenSoundSettings={() => setShowSoundModal(true)}
       />
@@ -191,31 +190,30 @@ export default function App() {
       <main className="mobile-content">
         {activeTab === 'scan' && (
           <ScanPage
-            shipments={shipments}
-            selectedShipmentId={selectedShipmentId}
-            onSelectShipment={setSelectedShipmentId}
+            groups={groups}
+            selectedGroupId={selectedGroupId}
+            onSelectGroup={setSelectedGroupId}
             recentScans={recentScans}
             lastScan={lastScan}
             onSetLastScan={setLastScan}
-            onRefreshShipments={() => {
-              api.getShipmentStatus().then(setShipments).catch(() => {});
+            onRefreshGroups={() => {
+              api.getGroups().then(setGroups).catch(() => {});
             }}
             onNavigateToSetup={() => setActiveTab('setup')}
             onNavigateToShipments={() => setActiveTab('shipments')}
           />
         )}
 
-
         {activeTab === 'shipments' && (
           <ShipmentsPage
-            shipments={shipments}
-            selectedShipmentId={selectedShipmentId}
-            onSelectShipment={(id) => {
-              setSelectedShipmentId(id);
+            groups={groups}
+            selectedGroupId={selectedGroupId}
+            onSelectGroup={(gid) => {
+              setSelectedGroupId(gid);
               setActiveTab('scan');
             }}
             onRefresh={() => {
-              api.getShipmentStatus().then(setShipments).catch(() => {});
+              api.getGroups().then(setGroups).catch(() => {});
             }}
             onResetShipments={handleReset}
             onNavigateToManifest={() => setActiveTab('manifest')}
@@ -250,8 +248,8 @@ export default function App() {
       <BottomNav
         activeTab={activeTab}
         onChangeTab={setActiveTab}
-        shipmentCount={shipments.length}
-        unfulfilledCount={unfulfilledShipmentsCount}
+        shipmentCount={groups.length}
+        unfulfilledCount={unfulfilledGroupsCount}
       />
 
       {/* Sound & Haptic Settings Modal */}

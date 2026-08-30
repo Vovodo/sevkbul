@@ -31,7 +31,10 @@ class ScanResponse:
 
 
 def process_global_scan(
-    db: Session, scanned_value: str, target_shipment_id: int | None = None
+    db: Session,
+    scanned_value: str,
+    target_shipment_id: int | None = None,
+    target_group_id: int | None = None,
 ) -> ScanResponse:
     label = scanned_value.strip()
     if not label:
@@ -43,7 +46,9 @@ def process_global_scan(
     if active_count == 0:
         raise ValueError("Önce SEVKİYATI BUL ile havuz oluşturun")
 
-    check = check_label_in_shipment_pool(db, label, target_shipment_id=target_shipment_id)
+    check = check_label_in_shipment_pool(
+        db, label, target_shipment_id=target_shipment_id, target_group_id=target_group_id
+    )
     inv = check.inventory
 
     if check.result == PoolCheckResult.NOT_IN_STOCK:

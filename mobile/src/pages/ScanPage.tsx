@@ -1,30 +1,30 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Camera, CornerDownLeft, XCircle, CheckCircle, AlertTriangle, Ban, AlertCircle, Maximize2 } from 'lucide-react';
-import { api, ScanResponse, ShipmentProgress, RecentScan } from '../api';
+import { api, ScanResponse, ShipmentGroup, RecentScan } from '../api';
 import { playMobileSound, triggerTapHaptic } from '../audio/audioEngine';
 import CameraScannerModal from '../components/CameraScannerModal';
 import FullscreenScanModal from '../components/FullscreenScanModal';
 
 interface ScanPageProps {
-  shipments: ShipmentProgress[];
-  selectedShipmentId?: number | null;
-  onSelectShipment?: (id: number) => void;
+  groups: ShipmentGroup[];
+  selectedGroupId?: number | null;
+  onSelectGroup?: (id: number) => void;
   recentScans: RecentScan[];
   lastScan: ScanResponse | null;
   onSetLastScan: (scan: ScanResponse | null) => void;
-  onRefreshShipments: () => void;
+  onRefreshGroups: () => void;
   onNavigateToSetup: () => void;
   onNavigateToShipments: () => void;
 }
 
 export default function ScanPage({
-  shipments,
-  selectedShipmentId,
-  onSelectShipment,
+  groups,
+  selectedGroupId,
+  onSelectGroup,
   recentScans,
   lastScan,
   onSetLastScan,
-  onRefreshShipments,
+  onRefreshGroups,
   onNavigateToSetup,
   onNavigateToShipments,
 }: ScanPageProps) {
@@ -53,7 +53,7 @@ export default function ScanPage({
     setErrorMsg('');
 
     try {
-      const result = await api.scan(trimmed, selectedShipmentId);
+      const result = await api.scan(trimmed, null, selectedGroupId);
       onSetLastScan(result);
 
       // Ses & Titreşim
@@ -70,7 +70,7 @@ export default function ScanPage({
         playMobileSound('failure');
       }
 
-      onRefreshShipments();
+      onRefreshGroups();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Okutma sırasında hata oluştu';
       setErrorMsg(msg);
@@ -80,7 +80,7 @@ export default function ScanPage({
       setScanValue('');
       focusInput();
     }
-  }, [focusInput, onRefreshShipments, onSetLastScan]);
+  }, [focusInput, onRefreshGroups, onSetLastScan, selectedGroupId]);
 
 
 
@@ -109,21 +109,21 @@ export default function ScanPage({
     }
   };
 
-  const totalScanned = shipments.reduce((sum, s) => sum + s.scanned_quantity, 0);
-  const totalTarget = shipments.reduce((sum, s) => sum + s.requested_quantity, 0);
-  const isAllComplete = shipments.length > 0 && shipments.every((s) => s.is_complete || s.scanned_quantity >= s.requested_quantity);
+  const totalScanned = groups.reduce((sum, g) => sum + g.scanned_quantity, 0);
+  const totalTarget = groups.reduce((sum, g) => sum + g.requested_quantity, 0);
+  const isAllComplete = groups.length > 0 && groups.every((g) => g.is_complete || g.scanned_quantity >= g.requested_quantity);
 
-  const selectedShipment = shipments.find((s) => s.shipment_id === selectedShipmentId) || shipments[0];
-  const selectedIdx = shipments.findIndex((s) => s.shipment_id === selectedShipment?.shipment_id);
-  const selectedTitle = selectedShipment?.name || `${selectedIdx + 1}. Sevkiyat`;
+  const selectedGroup = groups.find((g) => g.group_id === selectedGroupId) || groups[0];
+  const selectedIdx = groups.findIndex((g) => g.group_id === selectedGroup?.group_id);
+  const selectedTitle = selectedGroup?.name || `${selectedIdx + 1}. Sevkiyat`;
 
   return (
     <div className="mobile-page scan-page">
       {/* Top Active Shipment Quick Summary Bar */}
-      {shipments.length > 0 ? (
+      {groups.length > 0 ? (
         <div className="scan-summary-bar" onClick={onNavigateToShipments}>
           <div className="summary-bar-info">
-            <span className="summary-tag">{shipments.length} Sevkiyat Aktif</span>
+            <span className="summary-tag">{groups.length} Sevkiyat Aktif</span>
             <strong className="summary-qty">
               {totalScanned} / {totalTarget} Adet ({isAllComplete ? 'TAMAMLANDI ✓' : `%${Math.round(totalTarget > 0 ? (totalScanned / totalTarget) * 100 : 0)}`})
             </strong>
@@ -140,7 +140,7 @@ export default function ScanPage({
       )}
 
       {/* Aktif Okutulan Sevkiyat Hedefi & Seçici */}
-      {shipments.length > 0 && selectedShipment && (
+      {groups.length > 0 && selectedGroup && (
         <div
           style={{
             background: 'linear-gradient(135deg, rgba(30, 58, 138, 0.4) 0%, rgba(15, 23, 42, 0.7) 100%)',
@@ -168,16 +168,16 @@ export default function ScanPage({
               <strong style={{ fontSize: '0.9rem', color: '#fff' }}>{selectedTitle}</strong>
             </div>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-              {selectedShipment.scanned_quantity} / {selectedShipment.requested_quantity} Adet
+              {selectedGroup.scanned_quantity} / {selectedGroup.requested_quantity} Adet
             </span>
           </div>
 
-          <div style={{ fontSize: '0.75rem', color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>
-            Ref: {selectedShipment.reference}
+          <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
+            {selectedGroup.items.length} Referans içeriyor
           </div>
 
           {/* Quick Pill Switcher if multiple shipments exist */}
-          {shipments.length > 1 && (
+          {groups.length > 1 && (
             <div
               style={{
                 display: 'flex',
@@ -187,16 +187,16 @@ export default function ScanPage({
                 paddingBottom: '2px',
               }}
             >
-              {shipments.map((s, idx) => {
-                const isCur = selectedShipmentId === s.shipment_id;
-                const sName = s.name || `${idx + 1}. Sevkiyat`;
+              {groups.map((g, idx) => {
+                const isCur = selectedGroupId === g.group_id;
+                const gName = g.name || `${idx + 1}. Sevkiyat`;
                 return (
                   <button
-                    key={s.shipment_id}
+                    key={g.group_id}
                     type="button"
                     onClick={() => {
                       void triggerTapHaptic();
-                      onSelectShipment?.(s.shipment_id);
+                      onSelectGroup?.(g.group_id);
                       focusInput();
                     }}
                     style={{
@@ -211,7 +211,7 @@ export default function ScanPage({
                       cursor: 'pointer',
                     }}
                   >
-                    {isCur ? '🎯 ' : ''}{idx + 1}. {sName}
+                    {isCur ? '🎯 ' : ''}{idx + 1}. {gName}
                   </button>
                 );
               })}

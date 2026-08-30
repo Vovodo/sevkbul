@@ -511,3 +511,56 @@ class TestSelectedShipmentScanning:
         resp_dup = process_global_scan(db, "700024521", target_shipment_id=s2_id)
         assert resp_dup.result == ScanResult.ALREADY_SCANNED.value
         assert resp_dup.already_scanned is True
+
+    def test_multiple_references_in_single_shipment_batch(self, db):
+        """Kullanıcı tek bir sevkiyata 10 referans girdiğinde hepsi TEK bir Sevkiyat (Grup) içinde toplanmalıdır."""
+        from app.services.shipment_service import get_shipment_groups
+        from app.services.scan_service import process_global_scan
+        from app.models import ScanResult
+
+        # 3 farklı referans için stok oluştur
+        for i in range(3):
+            ref = f"REF-{i+1}"
+            make_inventory(db, f"LBL-{ref}-1", ref, 50.0, datetime(2026, 7, 1, 10, 0))
+            make_inventory(db, f"LBL-{ref}-2", ref, 50.0, datetime(2026, 7, 2, 10, 0))
+            add_target(db, ref, Decimal("100"))
+
+        lookup_cache.load_all_active(db)
+
+        # 1. Sevkiyat için 'SEVKİYATI BUL' tıklandı (3 referans aynı anda)
+        find_res = find_shipments(db, hourly_fifo=True)
+        assert len(find_res["shipments"]) == 3
+
+        # Grupları al: 3 ayrı sevkiyat KARTI DEĞİL, TEK BİR SEVKİYAT KARTI OLMALI!
+        groups = get_shipment_groups(db)
+        assert len(groups) == 1
+        g1 = groups[0]
+        assert g1["index"] == 1
+        assert g1["name"] == "1. Sevkiyat"
+        assert g1["requested_quantity"] == 300.0 # 3 x 100
+        assert len(g1["items"]) == 3 # 3 referans
+
+        # 1. Sevkiyat seçiliyken içindeki herhangi bir referansın etiketi okutulabilmeli
+        scan_r1 = process_global_scan(db, "LBL-REF-1-1", target_group_id=g1["group_id"])
+        assert scan_r1.result == ScanResult.SHIPMENT_PRODUCT.value
+
+        scan_r2 = process_global_scan(db, "LBL-REF-2-1", target_group_id=g1["group_id"])
+        assert scan_r2.result == ScanResult.SHIPMENT_PRODUCT.value
+
+        # Şimdi 2. Sevkiyat açıyoruz (+ Yeni Sevkiyat ile başka bir hedef)
+        ref4 = "REF-4"
+        make_inventory(db, "LBL-REF-4-1", ref4, 60.0, datetime(2026, 7, 3, 10, 0))
+        add_target(db, ref4, Decimal("60"))
+        find_shipments(db, hourly_fifo=True)
+
+        # Artık 2 grup olmalı (1. Sevkiyat ve 2. Sevkiyat)
+        groups2 = get_shipment_groups(db)
+        assert len(groups2) == 2
+        assert groups2[0]["name"] == "1. Sevkiyat"
+        assert len(groups2[0]["items"]) == 3
+        assert groups2[1]["name"] == "2. Sevkiyat"
+        assert len(groups2[1]["items"]) == 1
+
+        # 1. Sevkiyat seçiliyken 2. Sevkiyat'a ait etiket SEVKİYAT DIŞI olmalı!
+        scan_err = process_global_scan(db, "LBL-REF-4-1", target_group_id=groups2[0]["group_id"])
+        assert scan_err.result == ScanResult.OUTSIDE_SHIPMENT.value

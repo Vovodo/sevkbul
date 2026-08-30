@@ -70,51 +70,62 @@ def find_inventory_label(db: Session, label: str) -> InventoryLabel | None:
 
 
 def check_label_in_shipment_pool(
-    db: Session, label: str, target_shipment_id: int | None = None,
+    db: Session,
+    label: str,
+    target_shipment_id: int | None = None,
+    target_group_id: int | None = None,
 ) -> PoolCheck:
     """
-    Okutma doğrulaması — ÇOK SEVKIYAT VE SEÇİLİ SEVKİYAT ÖNCELİK DESTEKLİ:
+    Okutma doğrulaması — ÇOK SEVKIYAT VE SEÇİLİ SEVKİYAT GRUBU ÖNCELİK DESTEKLİ:
 
     1. Etiket veritabanında var mı? (Baştaki s/S ön ekleri esnek şekilde temizlenir)
-    2. Eğer target_shipment_id verildiyse (Kullanıcı arayüzde bir sevkiyat seçtiyse):
-       - Etiket doğrudan SEÇİLEN sevkiyata ait mi kontrol edilir.
+    2. Eğer target_group_id veya target_shipment_id verildiyse:
+       - Etiket doğrudan SEÇİLEN sevkiyat grubunun (içindeki herhangi bir referansın) havuzunda mı kontrol edilir.
        - Seçili sevkiyata ait değilse doğrudan OUTSIDE_POOL (SEVKİYAT DIŞI) döner.
-    3. target_shipment_id verilmediyse:
+    3. Hedef belirtilmediyse:
        - Tüm aktif/tamamlanmış sevkiyatlar içinde etiket aranır.
     """
     inv = find_inventory_label(db, label)
     if not inv:
         return PoolCheck(result=PoolCheckResult.NOT_IN_STOCK)
 
-    # ── 1. Kullanıcı belirli bir sevkiyat seçtiyse ─────────────────────────
-    if target_shipment_id is not None:
-        target_shipment = (
+    # ── 1. Kullanıcı belirli bir sevkiyat grubu seçtiyse ───────────────────
+    if target_group_id is not None or target_shipment_id is not None:
+        gid = target_group_id if target_group_id is not None else target_shipment_id
+
+        # Bu gruptaki tüm aktif shipment'lar
+        group_shipments = (
             db.query(Shipment)
-            .options(
-                joinedload(Shipment.shipment_labels)
-                .joinedload(ShipmentLabel.inventory_label)
+            .filter(
+                (Shipment.group_id == gid) | (Shipment.id == gid),
+                Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
             )
-            .filter(Shipment.id == target_shipment_id)
-            .first()
+            .all()
         )
-        if not target_shipment or target_shipment.status == ShipmentStatus.CANCELLED:
+        if not group_shipments:
             return PoolCheck(result=PoolCheckResult.NO_ACTIVE_SHIPMENT)
 
+        # Bu etiketin bu grupta bir allocation'ı var mı?
         allocation = (
             db.query(ShipmentLabel)
             .options(
-                joinedload(ShipmentLabel.shipment),
+                joinedload(ShipmentLabel.shipment)
+                .joinedload(Shipment.shipment_labels)
+                .joinedload(ShipmentLabel.inventory_label),
                 joinedload(ShipmentLabel.inventory_label),
             )
+            .join(Shipment, ShipmentLabel.shipment_id == Shipment.id)
             .filter(
-                ShipmentLabel.shipment_id == target_shipment_id,
                 ShipmentLabel.inventory_label_id == inv.id,
+                (Shipment.group_id == gid) | (Shipment.id == gid),
+                Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
             )
             .first()
         )
 
         if not allocation:
-            # Seçili sevkiyata ait değil (başka bir sevkiyata ait veya havuz dışı)
+            # Seçili sevkiyat grubuna ait değil (başka bir sevkiyata ait veya havuz dışı)
+            target_shipment = group_shipments[0]
             return PoolCheck(
                 result=PoolCheckResult.OUTSIDE_POOL,
                 inventory=inv,
@@ -125,9 +136,11 @@ def check_label_in_shipment_pool(
             return PoolCheck(
                 result=PoolCheckResult.ALREADY_SCANNED,
                 inventory=inv,
-                shipment=target_shipment,
+                shipment=allocation.shipment,
                 shipment_label=allocation,
             )
+
+        target_shipment = allocation.shipment
 
     # ── 2. Seçili sevkiyat belirtilmediyse (Genel Arama) ───────────────────
     else:
