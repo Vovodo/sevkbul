@@ -69,72 +69,108 @@ def find_inventory_label(db: Session, label: str) -> InventoryLabel | None:
     return None
 
 
-def check_label_in_shipment_pool(db: Session, label: str) -> PoolCheck:
+def check_label_in_shipment_pool(
+    db: Session, label: str, target_shipment_id: int | None = None,
+) -> PoolCheck:
     """
-    Okutma doğrulaması — ÇOK SEVKIYAT DESTEKLİ:
+    Okutma doğrulaması — ÇOK SEVKIYAT VE SEÇİLİ SEVKİYAT ÖNCELİK DESTEKLİ:
 
     1. Etiket veritabanında var mı? (Baştaki s/S ön ekleri esnek şekilde temizlenir)
-    2. Etiket herhangi bir aktif/tamamlanmış sevkiyatın ShipmentLabel'ında mı?
-       - Birden fazla sevkiyat olabilir; etiket yalnızca birinde olabilir
-         (FIFO devamlılığı sayesinde aynı etiket iki sevkiyata tahsis edilemez)
-    3. Etiket taranmış mı? → ALREADY_SCANNED
-    4. Etiketin ait olduğu sevkiyat tamamlanmış mı? → QUANTITY_EXCEEDED
-    5. FIFO grup kontenjanı dolmuş mu? → OUTSIDE_POOL
-    6. Yoksa IN_POOL
+    2. Eğer target_shipment_id verildiyse (Kullanıcı arayüzde bir sevkiyat seçtiyse):
+       - Etiket doğrudan SEÇİLEN sevkiyata ait mi kontrol edilir.
+       - Seçili sevkiyata ait değilse doğrudan OUTSIDE_POOL (SEVKİYAT DIŞI) döner.
+    3. target_shipment_id verilmediyse:
+       - Tüm aktif/tamamlanmış sevkiyatlar içinde etiket aranır.
     """
     inv = find_inventory_label(db, label)
     if not inv:
         return PoolCheck(result=PoolCheckResult.NOT_IN_STOCK)
 
-    # ── Bu etiketi herhangi bir aktif/tamamlanmış sevkiyatta bul ──────────
-    # Çoklu sevkiyat desteği: aynı etiket yalnızca bir sevkiyata tahsis
-    # edilebilir (FIFO devamlılığı bunu garanti eder), ama tüm kayıtlara bakıyoruz.
-    allocation = (
-        db.query(ShipmentLabel)
-        .options(
-            joinedload(ShipmentLabel.shipment)
-            .joinedload(Shipment.shipment_labels)
-            .joinedload(ShipmentLabel.inventory_label)
-        )
-        .join(Shipment, ShipmentLabel.shipment_id == Shipment.id)
-        .filter(
-            ShipmentLabel.inventory_label_id == inv.id,
-            Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
-        )
-        .order_by(Shipment.created_at.desc())
-        .first()
-    )
-
-    # ── Etiket daha önce tarandıysa ────────────────────────────────────
-    if allocation and allocation.status == ShipmentLabelStatus.SCANNED:
-        return PoolCheck(
-            result=PoolCheckResult.ALREADY_SCANNED,
-            inventory=inv,
-            shipment=allocation.shipment,
-            shipment_label=allocation,
-        )
-
-    # ── Etiketin ait olduğu sevkiyatı belirle ──────────────────────────
-    # Eğer etiket bir ShipmentLabel'da varsa o sevkiyatı kullan.
-    # Yoksa aynı referanstaki en son aktif sevkiyatı bul (dış referans kontrolü).
-    if allocation:
-        target_shipment = allocation.shipment
-    else:
-        # Bu referanstaki en son aktif sevkiyat (etiket bu sevkiyatın havuzunun
-        # dışında olabilir — FIFO grubu veya kontenjan aşımı)
+    # ── 1. Kullanıcı belirli bir sevkiyat seçtiyse ─────────────────────────
+    if target_shipment_id is not None:
         target_shipment = (
             db.query(Shipment)
             .options(
                 joinedload(Shipment.shipment_labels)
                 .joinedload(ShipmentLabel.inventory_label)
             )
+            .filter(Shipment.id == target_shipment_id)
+            .first()
+        )
+        if not target_shipment or target_shipment.status == ShipmentStatus.CANCELLED:
+            return PoolCheck(result=PoolCheckResult.NO_ACTIVE_SHIPMENT)
+
+        allocation = (
+            db.query(ShipmentLabel)
+            .options(
+                joinedload(ShipmentLabel.shipment),
+                joinedload(ShipmentLabel.inventory_label),
+            )
             .filter(
-                Shipment.reference == inv.reference,
+                ShipmentLabel.shipment_id == target_shipment_id,
+                ShipmentLabel.inventory_label_id == inv.id,
+            )
+            .first()
+        )
+
+        if not allocation:
+            # Seçili sevkiyata ait değil (başka bir sevkiyata ait veya havuz dışı)
+            return PoolCheck(
+                result=PoolCheckResult.OUTSIDE_POOL,
+                inventory=inv,
+                shipment=target_shipment,
+            )
+
+        if allocation.status == ShipmentLabelStatus.SCANNED:
+            return PoolCheck(
+                result=PoolCheckResult.ALREADY_SCANNED,
+                inventory=inv,
+                shipment=target_shipment,
+                shipment_label=allocation,
+            )
+
+    # ── 2. Seçili sevkiyat belirtilmediyse (Genel Arama) ───────────────────
+    else:
+        allocation = (
+            db.query(ShipmentLabel)
+            .options(
+                joinedload(ShipmentLabel.shipment)
+                .joinedload(Shipment.shipment_labels)
+                .joinedload(ShipmentLabel.inventory_label)
+            )
+            .join(Shipment, ShipmentLabel.shipment_id == Shipment.id)
+            .filter(
+                ShipmentLabel.inventory_label_id == inv.id,
                 Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
             )
             .order_by(Shipment.created_at.desc())
             .first()
         )
+
+        if allocation and allocation.status == ShipmentLabelStatus.SCANNED:
+            return PoolCheck(
+                result=PoolCheckResult.ALREADY_SCANNED,
+                inventory=inv,
+                shipment=allocation.shipment,
+                shipment_label=allocation,
+            )
+
+        if allocation:
+            target_shipment = allocation.shipment
+        else:
+            target_shipment = (
+                db.query(Shipment)
+                .options(
+                    joinedload(Shipment.shipment_labels)
+                    .joinedload(ShipmentLabel.inventory_label)
+                )
+                .filter(
+                    Shipment.reference == inv.reference,
+                    Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
+                )
+                .order_by(Shipment.created_at.desc())
+                .first()
+            )
 
     # ── Sevkiyat tamamlanmış veya miktar aşılmışsa ─────────────────────
     if target_shipment:

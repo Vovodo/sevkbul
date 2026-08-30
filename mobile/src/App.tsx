@@ -13,6 +13,7 @@ import ManifestPage from './pages/ManifestPage';
 export default function App() {
   const [activeTab, setActiveTab] = useState<MobileTab>('scan');
   const [shipments, setShipments] = useState<ShipmentProgress[]>([]);
+  const [selectedShipmentId, setSelectedShipmentId] = useState<number | null>(null);
   const [targets, setTargets] = useState<ShipmentTarget[]>([]);
   const [manifests, setManifests] = useState<ShipmentManifest[]>([]);
   const [recentScans, setRecentScans] = useState<RecentScan[]>([]);
@@ -20,6 +21,19 @@ export default function App() {
   const [stockLoaded, setStockLoaded] = useState<boolean>(false);
   const [stockCount, setStockCount] = useState<number>(0);
   const [showSoundModal, setShowSoundModal] = useState<boolean>(false);
+
+  // Aktif seçili sevkiyatı otomatik belirle
+  useEffect(() => {
+    if (shipments.length > 0) {
+      if (selectedShipmentId == null || !shipments.some((s) => s.shipment_id === selectedShipmentId)) {
+        const firstIncomplete =
+          shipments.find((s) => !s.is_complete && s.scanned_quantity < s.requested_quantity) || shipments[0];
+        setSelectedShipmentId(firstIncomplete.shipment_id);
+      }
+    } else {
+      setSelectedShipmentId(null);
+    }
+  }, [shipments, selectedShipmentId]);
 
   // Initial Data Fetch
   const refreshAllData = useCallback(async () => {
@@ -178,6 +192,8 @@ export default function App() {
         {activeTab === 'scan' && (
           <ScanPage
             shipments={shipments}
+            selectedShipmentId={selectedShipmentId}
+            onSelectShipment={setSelectedShipmentId}
             recentScans={recentScans}
             lastScan={lastScan}
             onSetLastScan={setLastScan}
@@ -193,6 +209,11 @@ export default function App() {
         {activeTab === 'shipments' && (
           <ShipmentsPage
             shipments={shipments}
+            selectedShipmentId={selectedShipmentId}
+            onSelectShipment={(id) => {
+              setSelectedShipmentId(id);
+              setActiveTab('scan');
+            }}
             onRefresh={() => {
               api.getShipmentStatus().then(setShipments).catch(() => {});
             }}

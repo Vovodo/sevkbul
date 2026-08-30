@@ -20,6 +20,7 @@ export default function OperationPage() {
   const [stockCount, setStockCount] = useState(0);
   const [targets, setTargets] = useState<ShipmentTarget[]>([]);
   const [shipments, setShipments] = useState<ShipmentProgress[]>([]);
+  const [selectedShipmentId, setSelectedShipmentId] = useState<number | null>(null);
   const [manualRef, setManualRef] = useState('');
   const [manualQty, setManualQty] = useState('');
   const [scanValue, setScanValue] = useState('');
@@ -33,6 +34,18 @@ export default function OperationPage() {
   });
   const [isFullscreen, setIsFullscreen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Aktif seçili sevkiyatı otomatik belirle
+  useEffect(() => {
+    if (shipments.length > 0) {
+      if (selectedShipmentId == null || !shipments.some(s => s.shipment_id === selectedShipmentId)) {
+        const firstIncomplete = shipments.find(s => !s.is_complete && s.scanned_quantity < s.requested_quantity) || shipments[0];
+        setSelectedShipmentId(firstIncomplete.shipment_id);
+      }
+    } else {
+      setSelectedShipmentId(null);
+    }
+  }, [shipments, selectedShipmentId]);
 
   const isScanning = phase === 'scanning' && shipments.length > 0;
 
@@ -312,7 +325,7 @@ export default function OperationPage() {
     if (!trimmed) return;
 
     try {
-      const result = await api.scan(trimmed);
+      const result = await api.scan(trimmed, selectedShipmentId);
       setLastScan(result);
       playScanSound(result.result as ScanResultType);
 
@@ -330,7 +343,7 @@ export default function OperationPage() {
       setScanValue('');
       focusScanInput();
     }
-  }, [focusScanInput]);
+  }, [focusScanInput, selectedShipmentId]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -524,6 +537,11 @@ export default function OperationPage() {
                 key={s.shipment_id}
                 shipment={s}
                 index={idx + 1}
+                isSelected={selectedShipmentId === s.shipment_id}
+                onSelect={() => {
+                  setSelectedShipmentId(s.shipment_id);
+                  focusScanInput();
+                }}
                 onUndoScan={handleUndoScan}
                 onRename={(id, name) => {
                   setShipments(prev => prev.map(sh =>
@@ -538,6 +556,50 @@ export default function OperationPage() {
 
       {isScanning && (
         <section className="op-section scan-section">
+          {/* Aktif Seçili Sevkiyat Hedefi Banner */}
+          {(() => {
+            const activeShipment = shipments.find(s => s.shipment_id === selectedShipmentId) || shipments[0];
+            const activeIdx = shipments.findIndex(s => s.shipment_id === activeShipment?.shipment_id);
+            const activeTitle = activeShipment?.name || `${activeIdx + 1}. Sevkiyat`;
+            const isDone = activeShipment?.is_complete || activeShipment?.scanned_quantity >= activeShipment?.requested_quantity;
+
+            return (
+              <div className="op-active-target-box">
+                <div className="op-active-target-header">
+                  <div className="op-active-target-badge">
+                    <span>🎯 OKUTULAN HEDEF SEVKİYAT:</span>
+                    <strong>{activeTitle}</strong>
+                    <span className="op-active-target-ref">({activeShipment?.reference} • {activeShipment?.scanned_quantity}/{activeShipment?.requested_quantity} adet)</span>
+                    {isDone && <span className="op-done-tag">TAMAMLANDI ✓</span>}
+                  </div>
+
+                  {shipments.length > 1 && (
+                    <div className="op-target-switch-group">
+                      <span style={{ fontSize: '0.78rem', color: '#9ca3af', marginRight: '4px' }}>Hedefi Değiştir:</span>
+                      {shipments.map((s, idx) => {
+                        const sTitle = s.name || `${idx + 1}. Sevkiyat`;
+                        const isSel = selectedShipmentId === s.shipment_id;
+                        return (
+                          <button
+                            key={s.shipment_id}
+                            type="button"
+                            className={`op-target-switch-btn ${isSel ? 'active' : ''}`}
+                            onClick={() => {
+                              setSelectedShipmentId(s.shipment_id);
+                              focusScanInput();
+                            }}
+                          >
+                            {isSel ? '🎯 ' : ''}{idx + 1}. {sTitle}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
           <h2>ETİKET / QR OKUT</h2>
           <div className="op-scan-area">
             <input

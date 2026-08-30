@@ -30,7 +30,9 @@ class ScanResponse:
     already_scanned: bool = False
 
 
-def process_global_scan(db: Session, scanned_value: str) -> ScanResponse:
+def process_global_scan(
+    db: Session, scanned_value: str, target_shipment_id: int | None = None
+) -> ScanResponse:
     label = scanned_value.strip()
     if not label:
         raise ValueError("Etiket boş olamaz")
@@ -41,7 +43,7 @@ def process_global_scan(db: Session, scanned_value: str) -> ScanResponse:
     if active_count == 0:
         raise ValueError("Önce SEVKİYATI BUL ile havuz oluşturun")
 
-    check = check_label_in_shipment_pool(db, label)
+    check = check_label_in_shipment_pool(db, label, target_shipment_id=target_shipment_id)
     inv = check.inventory
 
     if check.result == PoolCheckResult.NOT_IN_STOCK:
@@ -98,7 +100,7 @@ def process_global_scan(db: Session, scanned_value: str) -> ScanResponse:
 
 
 def process_scan(db: Session, shipment_id: int, scanned_value: str) -> ScanResponse:
-    return process_global_scan(db, scanned_value)
+    return process_global_scan(db, scanned_value, target_shipment_id=shipment_id)
 
 
 def _accept_scan(db, shipment_id: int, label: str, inv, sl) -> ScanResponse:

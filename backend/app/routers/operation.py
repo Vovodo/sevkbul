@@ -164,7 +164,7 @@ def remove_scan(shipment_id: int, label: str, db: Session = Depends(get_db)):
 @router.post("/scan", response_model=ScanResponseSchema)
 def global_scan(req: ScanRequest, db: Session = Depends(get_db)):
     try:
-        r = process_global_scan(db, req.label)
+        r = process_global_scan(db, req.label, target_shipment_id=req.shipment_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     scan_result = ScanResponseSchema(

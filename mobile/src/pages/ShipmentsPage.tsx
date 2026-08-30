@@ -19,6 +19,8 @@ import { triggerTapHaptic } from '../audio/audioEngine';
 
 interface ShipmentsPageProps {
   shipments: ShipmentProgress[];
+  selectedShipmentId?: number | null;
+  onSelectShipment?: (id: number) => void;
   onRefresh: () => void;
   onResetShipments: () => Promise<void>;
   onNavigateToManifest: () => void;
@@ -27,6 +29,8 @@ interface ShipmentsPageProps {
 
 export default function ShipmentsPage({
   shipments,
+  selectedShipmentId,
+  onSelectShipment,
   onRefresh,
   onResetShipments,
   onNavigateToManifest,
@@ -219,8 +223,10 @@ export default function ShipmentsPage({
             const progressRatio = s.requested_quantity > 0 ? (s.scanned_quantity / s.requested_quantity) * 100 : 0;
             const displayName = s.name || `${index + 1}. Sevkiyat`;
 
+            const isSelected = selectedShipmentId === s.shipment_id;
+
             return (
-              <div key={s.shipment_id} className={`shipment-card ${isDone ? 'is-complete' : 'is-active'}`}>
+              <div key={s.shipment_id} className={`shipment-card ${isDone ? 'is-complete' : 'is-active'} ${isSelected ? 'is-selected' : ''}`}>
                 <div className="shipment-card-main" onClick={() => toggleExpand(s.shipment_id)}>
                   {/* Top Card Row: Index + Title/Edit + Status */}
                   <div className="card-top-row">
@@ -344,8 +350,33 @@ export default function ShipmentsPage({
                       </div>
                     </div>
 
-                    <div className="card-expand-icon">
-                      {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      {onSelectShipment && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void triggerTapHaptic();
+                            onSelectShipment(s.shipment_id);
+                          }}
+                          style={{
+                            background: isSelected ? '#2563eb' : 'var(--surface2)',
+                            border: isSelected ? '1px solid #3b82f6' : '1px solid var(--border)',
+                            color: isSelected ? '#fff' : 'var(--muted)',
+                            fontSize: '0.68rem',
+                            fontWeight: isSelected ? 800 : 600,
+                            padding: '3px 7px',
+                            borderRadius: '5px',
+                            cursor: 'pointer',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {isSelected ? '🎯 SEÇİLİ' : 'Seç & Okut'}
+                        </button>
+                      )}
+                      <div className="card-expand-icon">
+                        {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                      </div>
                     </div>
                   </div>
 

@@ -432,3 +432,82 @@ class TestFindShipmentsContinuity:
         dates1 = get_fifo_dates(labels1)
         dates2 = get_fifo_dates(labels2)
         assert max(dates1) <= min(dates2), "S2 etiketleri S1'dekinden daha yeni olmalı"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Seçili Sevkiyata Göre Okutma Önceliği (Scoped / Prioritized Scan)
+# ─────────────────────────────────────────────────────────────────────────────
+class TestSelectedShipmentScanning:
+    """Kullanıcı belirli bir sevkiyatı seçtiğinde okutma sadece o sevkiyat için geçerli olmalıdır."""
+
+    def test_scan_scoped_to_selected_shipment_accepts_correct_label(self, db):
+        from app.services.scan_service import process_global_scan
+        from app.models import ScanResult
+
+        setup_six_labels(db)
+        ref = "6681378-HZN-1"
+
+        # S1 (60 adet) ve S2 (60 adet) oluştur
+        r1 = create_shipment_from_reference(db, ref, Decimal("60"), hourly_fifo=True)
+        r2 = create_shipment_from_reference(db, ref, Decimal("60"), hourly_fifo=True)
+
+        s1_id = r1.shipment_id
+        s2_id = r2.shipment_id
+
+        # S1 etiketleri: 700022382, 700022545
+        # S2 etiketleri: 700024521, 700024537
+
+        # 1. Kullanıcı S2'yi (ör. 'pzts') seçti:
+        # S2'ye ait etiket okutulduğunda kabul edilmeli (SEVKİYAT ÜRÜNÜ)
+        resp_s2_ok = process_global_scan(db, "700024521", target_shipment_id=s2_id)
+        assert resp_s2_ok.result == ScanResult.SHIPMENT_PRODUCT.value
+        assert resp_s2_ok.shipment_id == s2_id
+        assert resp_s2_ok.success is True
+
+        # S1'e ait etiket okutulduğunda S2 için SEVKİYAT DIŞI sayılmalı (S1'e yazmamalı!)
+        resp_s1_in_s2 = process_global_scan(db, "700022382", target_shipment_id=s2_id)
+        assert resp_s1_in_s2.result == ScanResult.OUTSIDE_SHIPMENT.value
+        assert resp_s1_in_s2.success is False
+
+    def test_scan_scoped_to_selected_shipment_s1(self, db):
+        from app.services.scan_service import process_global_scan
+        from app.models import ScanResult
+
+        setup_six_labels(db)
+        ref = "6681378-HZN-1"
+
+        r1 = create_shipment_from_reference(db, ref, Decimal("60"), hourly_fifo=True)
+        r2 = create_shipment_from_reference(db, ref, Decimal("60"), hourly_fifo=True)
+
+        s1_id = r1.shipment_id
+        s2_id = r2.shipment_id
+
+        # 2. Kullanıcı S1'i seçti:
+        # S1'e ait etiket kabul edilmeli
+        resp_s1_ok = process_global_scan(db, "700022382", target_shipment_id=s1_id)
+        assert resp_s1_ok.result == ScanResult.SHIPMENT_PRODUCT.value
+        assert resp_s1_ok.shipment_id == s1_id
+
+        # S2'ye ait etiket S1 seçiliyken SEVKİYAT DIŞI olmalı
+        resp_s2_in_s1 = process_global_scan(db, "700024521", target_shipment_id=s1_id)
+        assert resp_s2_in_s1.result == ScanResult.OUTSIDE_SHIPMENT.value
+
+    def test_scan_duplicate_in_selected_shipment(self, db):
+        from app.services.scan_service import process_global_scan
+        from app.models import ScanResult
+
+        setup_six_labels(db)
+        ref = "6681378-HZN-1"
+
+        create_shipment_from_reference(db, ref, Decimal("60"), hourly_fifo=True) # S1
+        r2 = create_shipment_from_reference(db, ref, Decimal("60"), hourly_fifo=True) # S2
+        s2_id = r2.shipment_id
+
+        # 1. Okutma (S2'ye ait 700024521)
+        resp1 = process_global_scan(db, "700024521", target_shipment_id=s2_id)
+        assert resp1.result == ScanResult.SHIPMENT_PRODUCT.value
+
+        # 2. Tekrar okutma -> ZATEN OKUTULDU
+        resp_dup = process_global_scan(db, "700024521", target_shipment_id=s2_id)
+        assert resp_dup.result == ScanResult.ALREADY_SCANNED.value
+        assert resp_dup.already_scanned is True

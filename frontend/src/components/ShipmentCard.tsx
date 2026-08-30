@@ -4,11 +4,20 @@ import { api, ShipmentProgress, ScannedLabel } from '../api';
 interface ShipmentCardProps {
   shipment: ShipmentProgress;
   index: number;               // 1-bazlı sıra numarası
+  isSelected?: boolean;
+  onSelect?: () => void;
   onUndoScan: (shipmentId: number, label: string) => Promise<void>;
   onRename: (shipmentId: number, name: string) => void;
 }
 
-export default function ShipmentCard({ shipment: s, index, onUndoScan, onRename }: ShipmentCardProps) {
+export default function ShipmentCard({
+  shipment: s,
+  index,
+  isSelected,
+  onSelect,
+  onUndoScan,
+  onRename,
+}: ShipmentCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [scanned, setScanned] = useState<ScannedLabel[]>([]);
   const [scannedLoaded, setScannedLoaded] = useState(false);
@@ -94,7 +103,7 @@ export default function ShipmentCard({ shipment: s, index, onUndoScan, onRename 
   };
 
   return (
-    <div className={`shipment-card-v2 ${isDone ? 'sc-done' : 'sc-active'}`}>
+    <div className={`shipment-card-v2 ${isDone ? 'sc-done' : 'sc-active'} ${isSelected ? 'sc-selected' : ''}`}>
       {/* ── Kart Başlığı ── */}
       <div className="sc-header" onClick={toggleExpand}>
         {/* Sol: Sıra numarası + isim */}
@@ -126,12 +135,24 @@ export default function ShipmentCard({ shipment: s, index, onUndoScan, onRename 
           </div>
         </div>
 
-        {/* Sağ: Durum pill + expand ikon */}
-        <div className="sc-header-right">
+        {/* Sağ: Seçim Butonu + Durum pill + expand ikon */}
+        <div className="sc-header-right" onClick={e => e.stopPropagation()}>
+          {onSelect && (
+            <button
+              type="button"
+              className={`sc-select-btn ${isSelected ? 'is-selected' : ''}`}
+              onClick={onSelect}
+              title={isSelected ? 'Şu an bu sevkiyat okutuluyor' : 'Okutmak için bu sevkiyatı seç'}
+            >
+              {isSelected ? '🎯 SEÇİLİ HEDEF' : 'Okutmak İçin Seç'}
+            </button>
+          )}
           <span className={`sc-status-pill ${isDone ? 'pill-done' : 'pill-active'}`}>
             {isDone ? '✅ Tamamlandı' : '🔄 Devam Ediyor'}
           </span>
-          <span className="sc-chevron">{expanded ? '▲' : '▼'}</span>
+          <span className="sc-chevron" onClick={toggleExpand} style={{ cursor: 'pointer' }}>
+            {expanded ? '▲' : '▼'}
+          </span>
         </div>
       </div>
 

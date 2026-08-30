@@ -62,6 +62,7 @@ class ShipmentProgressSchema(BaseModel):
 
 class ScanRequest(BaseModel):
     label: str
+    shipment_id: int | None = None
 
 
 class ScanResponseSchema(BaseModel):

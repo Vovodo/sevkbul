@@ -188,11 +188,11 @@ export const api = {
 
   getManifest: () => request<ShipmentManifest[]>('/api/shipment/manifest'),
 
-  scan: (label: string) =>
+  scan: (label: string, shipment_id?: number | null) =>
     request<ScanResponse>('/api/shipment/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ label }),
+      body: JSON.stringify({ label, shipment_id: shipment_id || null }),
     }),
 
   resetShipments: () =>

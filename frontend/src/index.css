@@ -1853,3 +1853,102 @@ body.fs-active .op-scan-input {
 .sc-scan-qty { color: #9ca3af; white-space: nowrap; }
 .sc-scan-fifo { color: #4b5563; font-size: 0.72rem; white-space: nowrap; }
 .sc-empty { color: #4b5563; font-size: 0.82rem; padding: 0.5rem 0; text-align: center; }
+
+/* Selected card highlight */
+.shipment-card-v2.sc-selected {
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.4), 0 4px 20px rgba(59, 130, 246, 0.15);
+}
+
+.sc-select-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid #374151;
+  color: #9ca3af;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.sc-select-btn:hover {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: #3b82f6;
+  color: #93c5fd;
+}
+.sc-select-btn.is-selected {
+  background: #2563eb;
+  border-color: #3b82f6;
+  color: #fff;
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+}
+
+/* Active Target Bar above scan input */
+.op-active-target-box {
+  background: linear-gradient(135deg, rgba(30, 58, 138, 0.3) 0%, rgba(15, 23, 42, 0.6) 100%);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+.op-active-target-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+.op-active-target-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: #e5e7eb;
+  flex-wrap: wrap;
+}
+.op-active-target-badge span:first-child {
+  color: #60a5fa;
+  font-weight: 800;
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+}
+.op-active-target-ref {
+  color: #9ca3af;
+  font-size: 0.8rem;
+}
+.op-done-tag {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.op-target-switch-group {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.op-target-switch-btn {
+  background: #1f2937;
+  border: 1px solid #374151;
+  color: #9ca3af;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.op-target-switch-btn:hover {
+  background: rgba(59, 130, 246, 0.1);
+  color: #fff;
+  border-color: #4b5563;
+}
+.op-target-switch-btn.active {
+  background: #2563eb;
+  border-color: #3b82f6;
+  color: #fff;
+  font-weight: 700;
+}
