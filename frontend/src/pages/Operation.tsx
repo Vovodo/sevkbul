@@ -46,6 +46,11 @@ export default function OperationPage() {
     }
   }, [groups, selectedGroupId]);
 
+  const handleSelectGroup = useCallback((gid: number) => {
+    setSelectedGroupId(gid);
+    api.selectActiveGroup(gid).catch(() => {});
+  }, []);
+
   const isScanning = phase === 'scanning' && groups.length > 0;
 
   const focusScanInput = useCallback(() => {
@@ -140,6 +145,11 @@ export default function OperationPage() {
         setShowSetup(false);
       }
     }).catch(() => {});
+    api.getActiveGroup().then(res => {
+      if (res.selected_group_id != null) {
+        setSelectedGroupId(res.selected_group_id);
+      }
+    }).catch(() => {});
   }, []);
 
   useEffect(() => { focusScanInput(); }, [isScanning, focusScanInput]);
@@ -147,6 +157,10 @@ export default function OperationPage() {
   // ─── Gerçek Zamanlı Canlı Güncelleme (WebSocket) ───
   const handleWsMessage = useCallback((msg: WsMessage) => {
     const d = msg.data;
+
+    if (d?.selected_group_id !== undefined) {
+      setSelectedGroupId(d.selected_group_id);
+    }
 
     if (msg.event === 'stock_import') {
       // Başka bir kullanıcı stok yükledi
@@ -160,6 +174,7 @@ export default function OperationPage() {
     if (msg.event === 'reset') {
       // Başka bir kullanıcı sevkiyatı sıfırladı
       setGroups([]);
+      setSelectedGroupId(null);
       setPhase('setup');
       setShowSetup(true);
       setRecentScans([]);
@@ -525,7 +540,7 @@ export default function OperationPage() {
                 index={idx + 1}
                 isSelected={selectedGroupId === g.group_id}
                 onSelect={() => {
-                  setSelectedGroupId(g.group_id);
+                  handleSelectGroup(g.group_id);
                   focusScanInput();
                 }}
                 onUndoScan={handleUndoScan}
@@ -538,20 +553,23 @@ export default function OperationPage() {
 
       {isScanning && (
         <section className="op-section scan-section">
-          {/* Aktif Seçili Sevkiyat Hedefi Banner */}
+          {/* Aktif Okutulan Sevkiyat Hedefi Banner'ı */}
           {(() => {
-            const activeGroup = groups.find(g => g.group_id === selectedGroupId) || groups[0];
-            const activeIdx = groups.findIndex(g => g.group_id === activeGroup?.group_id);
-            const activeTitle = activeGroup?.name || `${activeIdx + 1}. Sevkiyat`;
-            const isDone = activeGroup?.is_complete || activeGroup?.scanned_quantity >= activeGroup?.requested_quantity;
+            const curGroup = groups.find(g => g.group_id === selectedGroupId) || groups[0];
+            const curIdx = groups.findIndex(g => g.group_id === curGroup?.group_id);
+            const title = curGroup?.name || `${curIdx + 1}. Sevkiyat`;
+            const isDone = curGroup ? (curGroup.is_complete || curGroup.scanned_quantity >= curGroup.requested_quantity) : false;
 
             return (
-              <div className="op-active-target-box">
-                <div className="op-active-target-header">
-                  <div className="op-active-target-badge">
-                    <span>🎯 OKUTULAN HEDEF SEVKİYAT:</span>
-                    <strong>{activeTitle}</strong>
-                    <span className="op-active-target-ref">({activeGroup?.items.length} Referans • {activeGroup?.scanned_quantity}/{activeGroup?.requested_quantity} adet)</span>
+              <div className="op-target-banner">
+                <div className="op-target-banner-content">
+                  <div className="op-target-banner-left">
+                    <span className="op-target-icon">🎯</span>
+                    <span className="op-target-label">OKUTULAN HEDEF SEVKİYAT:</span>
+                    <strong className="op-target-name">{title}</strong>
+                    <span className="op-target-meta">
+                      ({curGroup?.items.length || 0} Referans • {curGroup?.scanned_quantity || 0}/{curGroup?.requested_quantity || 0} adet)
+                    </span>
                     {isDone && <span className="op-done-tag">TAMAMLANDI ✓</span>}
                   </div>
 
@@ -567,7 +585,7 @@ export default function OperationPage() {
                             type="button"
                             className={`op-target-switch-btn ${isSel ? 'active' : ''}`}
                             onClick={() => {
-                              setSelectedGroupId(g.group_id);
+                              handleSelectGroup(g.group_id);
                               focusScanInput();
                             }}
                           >

@@ -27,16 +27,45 @@ from app.ws_manager import ws_manager
 router = APIRouter(prefix="/api/shipment", tags=["operation"])
 
 
+_current_active_group_id: int | None = None
+
+
+def get_current_active_group_id(db: Session) -> int | None:
+    global _current_active_group_id
+    groups = get_shipment_groups(db)
+    if not groups:
+        _current_active_group_id = None
+        return None
+
+    if _current_active_group_id is not None and any(g["group_id"] == _current_active_group_id for g in groups):
+        return _current_active_group_id
+
+    first_incomplete = next(
+        (g["group_id"] for g in groups if not g["is_complete"] and g["scanned_quantity"] < g["requested_quantity"]),
+        groups[0]["group_id"]
+    )
+    _current_active_group_id = first_incomplete
+    return _current_active_group_id
+
+
+def set_current_active_group_id(group_id: int | None):
+    global _current_active_group_id
+    _current_active_group_id = group_id
+
+
 def _broadcast_full_status(db: Session, event: str = "sync", extra: dict | None = None):
-    """Tüm bağlı istemcilere güncel sevkiyat durumunu broadcast et."""
+    """Tüm bağlı istemcilere güncel sevkiyat durumunu ve seçili hedefi broadcast et."""
     shipments = get_active_shipments(db)
     groups = get_shipment_groups(db)
     status_list = [s if isinstance(s, dict) else s.model_dump() if hasattr(s, 'model_dump') else dict(s) for s in shipments]
     targets = [ShipmentTargetSchema(id=t.id, reference=t.reference, target_quantity=t.target_quantity).model_dump() for t in list_targets(db)]
+    active_gid = get_current_active_group_id(db)
+
     payload = {
         "groups": groups,
         "shipments": status_list,
         "targets": targets,
+        "selected_group_id": active_gid,
     }
     if extra:
         payload.update(extra)
@@ -115,8 +144,26 @@ def find_shipment_pools(hourly_fifo: bool = False, db: Session = Depends(get_db)
 @router.post("/reset")
 def reset_shipments(db: Session = Depends(get_db)):
     count = reset_active_shipments(db)
-    _broadcast_full_status(db, "reset", {"cancelled": count})
+    set_current_active_group_id(None)
+    _broadcast_full_status(db, "reset", {"cancelled": count, "selected_group_id": None})
     return {"cancelled": count}
+
+
+@router.post("/active-group/{group_id}")
+def set_active_group_endpoint(group_id: int, db: Session = Depends(get_db)):
+    """Aktif hedeflenen sevkiyat grubunu seç ve tüm cihazlara anlık yayınla."""
+    groups = get_shipment_groups(db)
+    if not any(g["group_id"] == group_id for g in groups):
+        raise HTTPException(status_code=404, detail="Sevkiyat grubu bulunamadı")
+    set_current_active_group_id(group_id)
+    _broadcast_full_status(db, "target_group_changed", {"selected_group_id": group_id})
+    return {"selected_group_id": group_id}
+
+
+@router.get("/active-group")
+def get_active_group_endpoint(db: Session = Depends(get_db)):
+    """Şu an seçili olan aktif sevkiyat grubu ID'sini döner."""
+    return {"selected_group_id": get_current_active_group_id(db)}
 
 
 @router.get("/status", response_model=list[ShipmentProgressSchema])

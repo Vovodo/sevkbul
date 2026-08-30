@@ -47,16 +47,20 @@ export default function App() {
   // Initial Data Fetch
   const refreshAllData = useCallback(async () => {
     try {
-      const [stats, targetList, groupList] = await Promise.all([
+      const [stats, targetList, groupList, activeGroup] = await Promise.all([
         api.getInventoryStats().catch(() => ({ total_labels: 0, total_references: 0 })),
         api.getTargets().catch(() => []),
         api.getGroups().catch(() => []),
+        api.getActiveGroup().catch(() => ({ selected_group_id: null })),
       ]);
 
       setStockLoaded(stats.total_labels > 0);
       setStockCount(stats.total_labels);
       setTargets(targetList);
       setGroups(groupList);
+      if (activeGroup.selected_group_id != null) {
+        setSelectedGroupId(activeGroup.selected_group_id);
+      }
 
       if (groupList.length > 0) {
         api.getManifest().then(setManifests).catch(() => {});
@@ -70,9 +74,18 @@ export default function App() {
     void refreshAllData();
   }, [refreshAllData]);
 
+  const handleSelectGroup = useCallback((gid: number) => {
+    setSelectedGroupId(gid);
+    api.selectActiveGroup(gid).catch(() => {});
+  }, []);
+
   // Live WebSocket Message Handler
   const handleWsMessage = useCallback((msg: WsMessage) => {
     const d = msg.data;
+
+    if (d?.selected_group_id !== undefined) {
+      setSelectedGroupId(d.selected_group_id);
+    }
 
     if (msg.event === 'stock_import') {
       if (d?.total_labels != null) {
@@ -84,6 +97,7 @@ export default function App() {
 
     if (msg.event === 'reset') {
       setGroups([]);
+      setSelectedGroupId(null);
       setRecentScans([]);
       setManifests([]);
       setLastScan(null);
@@ -201,7 +215,7 @@ export default function App() {
           <ScanPage
             groups={groups}
             selectedGroupId={selectedGroupId}
-            onSelectGroup={setSelectedGroupId}
+            onSelectGroup={handleSelectGroup}
             recentScans={recentScans}
             lastScan={lastScan}
             onSetLastScan={setLastScan}
@@ -218,7 +232,7 @@ export default function App() {
             groups={groups}
             selectedGroupId={selectedGroupId}
             onSelectGroup={(gid) => {
-              setSelectedGroupId(gid);
+              handleSelectGroup(gid);
               setActiveTab('scan');
             }}
             onRefresh={() => {

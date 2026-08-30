@@ -243,4 +243,12 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name }),
     }),
+
+  selectActiveGroup: (groupId: number) =>
+    request<{ selected_group_id: number }>(`/api/shipment/active-group/${groupId}`, {
+      method: 'POST',
+    }),
+
+  getActiveGroup: () =>
+    request<{ selected_group_id: number | null }>('/api/shipment/active-group'),
 };
