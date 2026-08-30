@@ -263,7 +263,12 @@ export default function OperationPage() {
     setError('');
     try {
       const r = await api.findShipments(hourlyFifo);
-      setShipments(r.shipments);
+      // Yeni sevkiyatları mevcut listeye ekle (FIFO devamlılığı: önceki sevkiyatlar korunur)
+      setShipments(prev => {
+        const existingIds = new Set(prev.map(s => s.shipment_id));
+        const newOnes = r.shipments.filter(s => !existingIds.has(s.shipment_id));
+        return [...prev, ...newOnes];
+      });
       setTargets([]);
       if (r.shipments.length > 0) {
         setPhase('scanning');
@@ -505,12 +510,29 @@ export default function OperationPage() {
             </button>
           </div>
 
+          {shipments.length > 0 && (
+            <div style={{
+              background: 'rgba(59, 130, 246, 0.08)',
+              border: '1px solid rgba(59, 130, 246, 0.25)',
+              borderRadius: '8px',
+              padding: '0.6rem 0.9rem',
+              fontSize: '0.8rem',
+              color: '#93c5fd',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              marginBottom: '0.5rem',
+            }}>
+              ⚡ <span><strong>FIFO Devam Modu:</strong> {shipments.length} aktif sevkiyat var. Yeni sevkiyat önceki FIFO tahsislerinden devam eder. Sıfırlamak için <strong>Sevkiyatı Sıfırla</strong> butonunu kullanın.</span>
+            </div>
+          )}
+
           <button
             className="op-btn primary large"
             onClick={handleFind}
             disabled={loading === 'find' || !stockLoaded || targets.length === 0}
           >
-            {loading === 'find' ? 'Hesaplanıyor...' : 'SEVKİYATI BUL'}
+            {loading === 'find' ? 'Hesaplanıyor...' : shipments.length > 0 ? '+ YENİ SEVKİYAT EKLE (FIFO DEVAM)' : 'SEVKİYATI BUL'}
           </button>
         </section>
       )}
