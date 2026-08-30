@@ -2088,3 +2088,33 @@ html, body {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
+
+/* ─── BRAND LOGO ANIMATIONS & STYLES (MOBILE) ─── */
+.app-logo-wrap {
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.app-logo-wrap:active {
+  transform: scale(0.96);
+}
+
+.app-logo-svg {
+  filter: drop-shadow(0 3px 10px rgba(56, 189, 248, 0.25));
+  transition: all 0.3s ease;
+}
+
+.logo-pulse-anim {
+  animation: logo-subtle-pulse 2.5s infinite ease-in-out;
+}
+
+@keyframes logo-subtle-pulse {
+  0%, 100% {
+    transform: scale(1);
+    filter: drop-shadow(0 3px 10px rgba(56, 189, 248, 0.25));
+  }
+  50% {
+    transform: scale(1.05);
+    filter: drop-shadow(0 5px 16px rgba(56, 189, 248, 0.55));
+  }
+}
+

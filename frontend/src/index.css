@@ -1697,3 +1697,33 @@ body.fs-active .op-scan-input {
   font-size: 0.75rem;
 }
 
+/* ─── BRAND LOGO ANIMATIONS & STYLES ─── */
+.app-logo-wrap {
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.app-logo-wrap:hover {
+  transform: scale(1.02);
+}
+
+.app-logo-svg {
+  filter: drop-shadow(0 4px 12px rgba(56, 189, 248, 0.25));
+  transition: all 0.3s ease;
+}
+
+.logo-pulse-anim {
+  animation: logo-subtle-pulse 2.5s infinite ease-in-out;
+}
+
+@keyframes logo-subtle-pulse {
+  0%, 100% {
+    transform: scale(1);
+    filter: drop-shadow(0 4px 12px rgba(56, 189, 248, 0.25));
+  }
+  50% {
+    transform: scale(1.04);
+    filter: drop-shadow(0 6px 20px rgba(56, 189, 248, 0.55));
+  }
+}
+
+

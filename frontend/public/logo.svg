@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <!-- Background / Glow Gradients -->
+    <linearGradient id="primaryGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="50%" stop-color="#2563eb" />
+      <stop offset="100%" stop-color="#1d4ed8" />
+    </linearGradient>
+
+    <linearGradient id="accentGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="60%" stop-color="#06b6d4" />
+      <stop offset="100%" stop-color="#38bdf8" />
+    </linearGradient>
+
+    <linearGradient id="scanBeamGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0" />
+      <stop offset="30%" stop-color="#38bdf8" stop-opacity="0.8" />
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="1" />
+      <stop offset="70%" stop-color="#10b981" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="#10b981" stop-opacity="0" />
+    </linearGradient>
+
+    <linearGradient id="boxTopGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+
+    <filter id="neonGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="12" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+
+    <filter id="softShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="16" stdDeviation="20" flood-color="#0f172a" flood-opacity="0.6" />
+    </filter>
+  </defs>
+
+  <!-- Base Glow -->
+  <circle cx="256" cy="256" r="210" fill="url(#primaryGrad)" opacity="0.08" filter="url(#neonGlow)" />
+
+  <!-- Outer Hexagonal / Box Container Frame with Shadow -->
+  <g filter="url(#softShadow)">
+    <!-- Top Face of Isometric Box -->
+    <path
+      d="M256 64 L420 156 L256 248 L92 156 Z"
+      fill="url(#boxTopGrad)"
+      stroke="url(#accentGrad)"
+      stroke-width="6"
+      stroke-linejoin="round"
+    />
+
+    <!-- Left Face of Isometric Box -->
+    <path
+      d="M92 156 L256 248 L256 436 L92 344 Z"
+      fill="#0f172a"
+      stroke="url(#primaryGrad)"
+      stroke-width="6"
+      stroke-linejoin="round"
+    />
+
+    <!-- Right Face of Isometric Box -->
+    <path
+      d="M256 248 L420 156 L420 344 L256 436 Z"
+      fill="#131e36"
+      stroke="url(#accentGrad)"
+      stroke-width="6"
+      stroke-linejoin="round"
+    />
+
+    <!-- Stylized "S" / FIFO Forward Speed Flow inside Front Faces -->
+    <!-- Top-Right to Center Flow -->
+    <path
+      d="M370 190 L275 243 L275 320 L350 278"
+      stroke="url(#accentGrad)"
+      stroke-width="14"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+
+    <!-- Left to Center-Bottom Flow completing the "S" -->
+    <path
+      d="M162 235 L237 277 L237 355 L142 302"
+      stroke="url(#primaryGrad)"
+      stroke-width="14"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+
+    <!-- Central FIFO Speed Arrow & Sync Center -->
+    <path
+      d="M256 215 L285 245 L256 275 L227 245 Z"
+      fill="#38bdf8"
+      filter="url(#neonGlow)"
+    />
+
+    <!-- Barcode / QR Matrix Grid lines on Top Face -->
+    <line x1="200" y1="130" x2="230" y2="147" stroke="#38bdf8" stroke-width="4" stroke-linecap="round" opacity="0.8" />
+    <line x1="215" y1="120" x2="260" y2="145" stroke="#38bdf8" stroke-width="6" stroke-linecap="round" opacity="0.9" />
+    <line x1="250" y1="110" x2="280" y2="127" stroke="#10b981" stroke-width="4" stroke-linecap="round" opacity="0.8" />
+    <line x1="280" y1="118" x2="315" y2="138" stroke="#10b981" stroke-width="5" stroke-linecap="round" opacity="0.9" />
+
+    <!-- Laser Scanning Beam Crossline (Cyan/White Glow) -->
+    <path
+      d="M70 248 Q256 230 442 248"
+      stroke="url(#scanBeamGrad)"
+      stroke-width="8"
+      stroke-linecap="round"
+      filter="url(#neonGlow)"
+    />
+
+    <!-- Precision Corner Targeting Reticles (BUL / FIND Iconography) -->
+    <path d="M72 130 L60 136 L60 170" stroke="#38bdf8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M440 130 L452 136 L452 170" stroke="#38bdf8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M60 330 L60 360 L75 368" stroke="#38bdf8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M452 330 L452 360 L437 368" stroke="#10b981" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+</svg>

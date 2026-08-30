@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { api, ShipmentManifest } from '../api';
 import { useLiveUpdates } from '../useLiveUpdates';
+import Logo from './Logo';
 
 interface ManifestModalProps {
   isOpen: boolean;
@@ -39,26 +40,29 @@ export default function ManifestModal({ isOpen, onClose }: ManifestModalProps) {
 
   if (!isOpen) return null;
 
-  const handlePrint = () => {
-    window.print();
-  };
-
   const totalRequested = manifests.reduce((sum, m) => sum + m.requested_quantity, 0);
   const totalScanned = manifests.reduce((sum, m) => sum + m.scanned_quantity, 0);
   const totalLabels = manifests.reduce((sum, m) => sum + m.items.length, 0);
   const completedRefs = manifests.filter(m => m.is_complete || m.scanned_quantity >= m.requested_quantity).length;
+
+  const handlePrint = () => {
+    window.print();
+  };
 
   return (
     <div className="manifest-overlay" onClick={onClose}>
       <div className="manifest-modal" onClick={e => e.stopPropagation()}>
         {/* Screen Header */}
         <div className="manifest-header no-print">
-          <div className="manifest-title">
-            <h2>📋 FİFO HESAPLAMA VE SİSTEM MANİFESTİ</h2>
-            <div className="manifest-badges">
-              <span className="manifest-badge info">{manifests.length} Referans</span>
-              <span className="manifest-badge ok">Toplam: {totalScanned} / {totalRequested} Adet ({completedRefs}/{manifests.length} Tamamlandı)</span>
-              <span className="manifest-badge pool">{totalLabels} Aday Etiket</span>
+          <div className="manifest-title" style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+            <Logo size="sm" variant="icon" />
+            <div>
+              <h2>FİFO HESAPLAMA VE SİSTEM MANİFESTİ</h2>
+              <div className="manifest-badges">
+                <span className="manifest-badge info">{manifests.length} Referans</span>
+                <span className="manifest-badge ok">Toplam: {totalScanned} / {totalRequested} Adet ({completedRefs}/{manifests.length} Tamamlandı)</span>
+                <span className="manifest-badge pool">{totalLabels} Aday Etiket</span>
+              </div>
             </div>
           </div>
           <div className="manifest-actions">

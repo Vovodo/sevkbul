@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
-import { X, Camera, RefreshCw } from 'lucide-react';
+import { X, RefreshCw } from 'lucide-react';
 import { triggerTapHaptic } from '../audio/audioEngine';
+import Logo from './Logo';
 
 interface CameraScannerModalProps {
   isOpen: boolean;
@@ -129,10 +130,12 @@ export default function CameraScannerModal({
       <div className="camera-modal-content">
         <div className="camera-modal-header">
           <div className="camera-header-title">
-            <Camera size={18} />
+            <Logo size="xs" variant="icon" />
             <span>Barkod / QR Kamera Okuyucu</span>
           </div>
           <div className="camera-header-actions">
+
+
             {cameras.length > 1 && (
               <button type="button" className="camera-icon-btn" onClick={switchCamera} title="Kamera Değiştir">
                 <RefreshCw size={18} />

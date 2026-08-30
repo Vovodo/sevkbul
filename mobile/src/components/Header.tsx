@@ -1,5 +1,6 @@
 import { Volume2, VolumeX, Wifi, WifiOff } from 'lucide-react';
 import { loadMobileAudioSettings } from '../audio/audioSettings';
+import Logo from './Logo';
 
 interface HeaderProps {
   wsConnected: boolean;
@@ -19,14 +20,9 @@ export default function Header({
   return (
     <header className="mobile-header">
       <div className="header-left">
-        <div className="header-logo-badge">
-          <span className="logo-icon">📦</span>
-          <div className="header-titles">
-            <h1 className="app-title">SevkiyatBul</h1>
-            <span className="app-subtitle">Mobil Operasyon</span>
-          </div>
-        </div>
+        <Logo size="sm" variant="full" />
       </div>
+
 
       <div className="header-right">
         {/* WebSocket Status Indicator */}

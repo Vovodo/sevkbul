@@ -4,7 +4,9 @@ import { playScanSound, getResultStyle, initAudio, ScanResultType } from '../aud
 import SoundSettings from '../components/SoundSettings';
 import ManifestModal from '../components/ManifestModal';
 import MobileDownloadModal from '../components/MobileDownloadModal';
+import Logo from '../components/Logo';
 import { useLiveUpdates, WsMessage } from '../useLiveUpdates';
+
 
 type Phase = 'setup' | 'scanning';
 
@@ -374,9 +376,12 @@ export default function OperationPage() {
   return (
     <div className="op-page">
       <header className="op-header">
-        <h1>SEVKİYAT BUL</h1>
-        {stockLoaded && <span className="op-badge ok">{stockCount.toLocaleString('tr-TR')} etiket yüklü</span>}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+          <Logo size="md" variant="full" />
+          {stockLoaded && <span className="op-badge ok">{stockCount.toLocaleString('tr-TR')} etiket yüklü</span>}
+        </div>
         <div className="op-header-actions">
+
           {shipments.length > 0 && (
             <button
               type="button"
@@ -644,9 +649,13 @@ export default function OperationPage() {
 
       {isFullscreen && (
         <div className="fs-overlay" role="dialog" aria-modal="true" aria-label="Tam ekran okutma bildirimi">
-          <button type="button" className="fs-close-btn" onClick={exitFullscreen}>
-            ✕ Tam Ekrandan Çık
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', marginBottom: '1rem' }}>
+            <Logo size="sm" variant="full" />
+            <button type="button" className="fs-close-btn" onClick={exitFullscreen}>
+              ✕ Tam Ekrandan Çık
+            </button>
+          </div>
+
 
           <div className="fs-card-container">
             {lastScan && resultStyle ? (

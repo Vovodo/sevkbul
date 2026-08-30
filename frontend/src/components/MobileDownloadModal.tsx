@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import Logo from './Logo';
 
 interface MobileDownloadModalProps {
   isOpen: boolean;
@@ -39,7 +40,7 @@ export default function MobileDownloadModal({ isOpen, onClose }: MobileDownloadM
       <div className="mobile-download-modal" onClick={(e) => e.stopPropagation()}>
         <div className="download-modal-header">
           <div className="download-modal-title">
-            <span className="modal-icon">📱</span>
+            <Logo size="sm" variant="icon" />
             <div>
               <h3>SevkiyatBul Mobil Uygulaması</h3>
               <span className="modal-subtitle">Android APK İndir</span>
@@ -48,6 +49,7 @@ export default function MobileDownloadModal({ isOpen, onClose }: MobileDownloadM
           <button type="button" className="op-btn danger compact" onClick={onClose}>
             ✕ Kapat
           </button>
+
         </div>
 
         <div className="download-modal-body">
