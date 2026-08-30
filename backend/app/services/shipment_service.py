@@ -2,6 +2,7 @@ from decimal import Decimal
 from datetime import datetime
 from dataclasses import dataclass
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -25,12 +26,51 @@ class ShipmentCreateResult:
     fifo_group_count: int
 
 
+def _get_previously_allocated(
+    db: Session,
+    reference: str,
+    exclude_shipment_id: int | None = None,
+) -> dict[int, Decimal]:
+    """
+    Belirtilen referans için aktif/tamamlanmış tüm sevkiyatlardaki
+    inventory_label_id → toplam allocated_quantity haritasını döner.
+
+    Bu sayede yeni sevkiyat oluşturulurken FIFO motoru:
+        kullanılabilir_miktar = toplam_stok - önceki_tahsisler
+    ile çalışır.
+
+    exclude_shipment_id: Bu sevkiyatın kendi tahsislerini hariç tut
+    (undo/yeniden hesaplama senaryoları için).
+    """
+    query = (
+        db.query(
+            ShipmentLabel.inventory_label_id,
+            func.sum(ShipmentLabel.allocated_quantity).label("total_allocated"),
+        )
+        .join(Shipment, ShipmentLabel.shipment_id == Shipment.id)
+        .filter(
+            Shipment.reference == reference,
+            Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
+        )
+        .group_by(ShipmentLabel.inventory_label_id)
+    )
+
+    if exclude_shipment_id is not None:
+        query = query.filter(ShipmentLabel.shipment_id != exclude_shipment_id)
+
+    rows = query.all()
+    return {
+        row.inventory_label_id: Decimal(str(row.total_allocated))
+        for row in rows
+    }
+
+
 def create_shipment_from_reference(
     db: Session,
     reference: str,
     requested_quantity: Decimal,
     hourly_fifo: bool = False,
-) -> ShipmentCreateResult:
+) -> "ShipmentCreateResult":
     labels = (
         db.query(InventoryLabel)
         .filter(InventoryLabel.reference == reference)
@@ -41,16 +81,33 @@ def create_shipment_from_reference(
     if not labels:
         raise ValueError(f"Referans stokta bulunamadı: {reference}")
 
-    items = [
-        InventoryItem(
-            label=l.label,
-            reference=l.reference,
-            quantity=l.quantity,
-            fifo_date=l.fifo_date,
-            id=l.id,
+    # ── ÇOKLU SEVKİYAT FIFO DEVAMLILIĞI ──────────────────────────────────
+    # Aynı referans için önceki aktif/tamamlanmış sevkiyatlarda tahsis
+    # edilmiş miktarları hesapla. FIFO motoru bu miktarları stoktan düşerek
+    # kaldığı yerden devam eder. Stok kayıtları silinmez.
+    previously_allocated = _get_previously_allocated(db, reference)
+
+    items = []
+    for lbl in labels:
+        used = previously_allocated.get(lbl.id, Decimal("0"))
+        available = lbl.quantity - used
+        if available > Decimal("0"):
+            items.append(
+                InventoryItem(
+                    label=lbl.label,
+                    reference=lbl.reference,
+                    quantity=available,   # ← Kalan kullanılabilir miktar
+                    fifo_date=lbl.fifo_date,
+                    id=lbl.id,
+                )
+            )
+    # ─────────────────────────────────────────────────────────────────────
+
+    if not items:
+        raise ValueError(
+            f"Bu referans için kullanılabilir stok kalmadı: {reference}. "
+            "Tüm miktarlar önceki sevkiyatlara tahsis edildi."
         )
-        for l in labels
-    ]
 
     fifo_result = calculate_fifo_groups(items, requested_quantity, hourly_fifo=hourly_fifo)
 

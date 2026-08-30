@@ -43,7 +43,22 @@ def clear_targets(db: Session):
 
 
 def find_shipments(db: Session, hourly_fifo: bool = False) -> list[dict]:
-    """Tüm hedefler için FIFO havuzlarını oluştur."""
+    """
+    Tüm hedefler için FIFO havuzlarını oluştur.
+
+    ── ÇOKLU SEVKİYAT FIFO DEVAMLILIĞI ──────────────────────────────────
+    Önceki sürümde bu fonksiyon, her çağrıda mevcut aktif/tamamlanmış
+    sevkiyatları CANCELLED yaparak sıfırlıyordu.
+
+    Yeni davranış:
+    - Önceki sevkiyatlar KORUNUR ve iptal edilmez.
+    - Her referans için `create_shipment_from_reference()` çağrılınca,
+      önceki sevkiyatlarda tahsis edilmiş miktarlar otomatik olarak
+      kullanılabilir stoktan düşülür (shipment_service._get_previously_allocated).
+    - FIFO sıralama ve tarih/saat önceliği aynen korunur.
+    - Sıfırlamak için kullanıcı "Sevkiyatı Sıfırla" butonunu kullanır.
+    ──────────────────────────────────────────────────────────────────────
+    """
     targets = db.query(ShipmentTarget).order_by(ShipmentTarget.id).all()
     if not targets:
         raise ValueError("Sevkiyat hedefi tanımlı değil")
@@ -52,18 +67,17 @@ def find_shipments(db: Session, hourly_fifo: bool = False) -> list[dict]:
     if stock_count == 0:
         raise ValueError("Önce stok Exceli yükleyin")
 
-    active = db.query(Shipment).filter(Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED])).all()
-    for s in active:
-        s.status = ShipmentStatus.CANCELLED
-        lookup_cache.unload_shipment(s.id)
-    db.commit()
+    # NOT: Önceki sevkiyatlar artık iptal edilmiyor.
+    # FIFO devamlılığı sayesinde yeni sevkiyatlar kaldığı yerden başlar.
 
     results = []
     errors = []
 
     for t in targets:
         try:
-            created = create_shipment_from_reference(db, t.reference, t.target_quantity, hourly_fifo=hourly_fifo)
+            created = create_shipment_from_reference(
+                db, t.reference, t.target_quantity, hourly_fifo=hourly_fifo
+            )
             results.append({
                 "shipment_id": created.shipment_id,
                 "reference": created.reference,

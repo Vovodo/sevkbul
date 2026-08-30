@@ -71,32 +71,32 @@ def find_inventory_label(db: Session, label: str) -> InventoryLabel | None:
 
 def check_label_in_shipment_pool(db: Session, label: str) -> PoolCheck:
     """
-    Okutma doğrulaması:
+    Okutma doğrulaması — ÇOK SEVKIYAT DESTEKLİ:
+
     1. Etiket veritabanında var mı? (Baştaki s/S ön ekleri esnek şekilde temizlenir)
-    2. Etiket aktif/tamamlanmış sevkiyatın aday etiketleri (ShipmentLabel) arasında mı?
-    3. Sevkiyat zaten tamamlanmış mı (Miktar Aşıldı)?
-    4. Etiketin ait olduğu FIFO tarih grubunun tahsisli kontenjanı dolmuş mu?
+    2. Etiket herhangi bir aktif/tamamlanmış sevkiyatın ShipmentLabel'ında mı?
+       - Birden fazla sevkiyat olabilir; etiket yalnızca birinde olabilir
+         (FIFO devamlılığı sayesinde aynı etiket iki sevkiyata tahsis edilemez)
+    3. Etiket taranmış mı? → ALREADY_SCANNED
+    4. Etiketin ait olduğu sevkiyat tamamlanmış mı? → QUANTITY_EXCEEDED
+    5. FIFO grup kontenjanı dolmuş mu? → OUTSIDE_POOL
+    6. Yoksa IN_POOL
     """
     inv = find_inventory_label(db, label)
     if not inv:
         return PoolCheck(result=PoolCheckResult.NOT_IN_STOCK)
 
-    # 1. Bu referansa ait aktif veya tamamlanmış sevkiyatı bul
-    shipment_for_ref = (
-        db.query(Shipment)
-        .options(joinedload(Shipment.shipment_labels).joinedload(ShipmentLabel.inventory_label))
-        .filter(
-            Shipment.reference == inv.reference,
-            Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
-        )
-        .order_by(Shipment.created_at.desc())
-        .first()
-    )
-
+    # ── Bu etiketi herhangi bir aktif/tamamlanmış sevkiyatta bul ──────────
+    # Çoklu sevkiyat desteği: aynı etiket yalnızca bir sevkiyata tahsis
+    # edilebilir (FIFO devamlılığı bunu garanti eder), ama tüm kayıtlara bakıyoruz.
     allocation = (
         db.query(ShipmentLabel)
-        .options(joinedload(ShipmentLabel.shipment).joinedload(Shipment.shipment_labels).joinedload(ShipmentLabel.inventory_label))
-        .join(Shipment)
+        .options(
+            joinedload(ShipmentLabel.shipment)
+            .joinedload(Shipment.shipment_labels)
+            .joinedload(ShipmentLabel.inventory_label)
+        )
+        .join(Shipment, ShipmentLabel.shipment_id == Shipment.id)
         .filter(
             ShipmentLabel.inventory_label_id == inv.id,
             Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
@@ -105,7 +105,7 @@ def check_label_in_shipment_pool(db: Session, label: str) -> PoolCheck:
         .first()
     )
 
-    # Bu etiket daha önce zaten okutulduysa:
+    # ── Etiket daha önce tarandıysa ────────────────────────────────────
     if allocation and allocation.status == ShipmentLabelStatus.SCANNED:
         return PoolCheck(
             result=PoolCheckResult.ALREADY_SCANNED,
@@ -114,14 +114,38 @@ def check_label_in_shipment_pool(db: Session, label: str) -> PoolCheck:
             shipment_label=allocation,
         )
 
-    # Eğer referansın sevkiyatı zaten tamamlanmış veya hedef miktar dolmuşsa:
-    target_shipment = (allocation.shipment if allocation else shipment_for_ref)
+    # ── Etiketin ait olduğu sevkiyatı belirle ──────────────────────────
+    # Eğer etiket bir ShipmentLabel'da varsa o sevkiyatı kullan.
+    # Yoksa aynı referanstaki en son aktif sevkiyatı bul (dış referans kontrolü).
+    if allocation:
+        target_shipment = allocation.shipment
+    else:
+        # Bu referanstaki en son aktif sevkiyat (etiket bu sevkiyatın havuzunun
+        # dışında olabilir — FIFO grubu veya kontenjan aşımı)
+        target_shipment = (
+            db.query(Shipment)
+            .options(
+                joinedload(Shipment.shipment_labels)
+                .joinedload(ShipmentLabel.inventory_label)
+            )
+            .filter(
+                Shipment.reference == inv.reference,
+                Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
+            )
+            .order_by(Shipment.created_at.desc())
+            .first()
+        )
+
+    # ── Sevkiyat tamamlanmış veya miktar aşılmışsa ─────────────────────
     if target_shipment:
         total_scanned = sum(
             float(sl.scanned_quantity) for sl in target_shipment.shipment_labels
             if sl.status in (ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL)
         )
-        if target_shipment.status == ShipmentStatus.COMPLETED or total_scanned >= float(target_shipment.requested_quantity):
+        if (
+            target_shipment.status == ShipmentStatus.COMPLETED
+            or total_scanned >= float(target_shipment.requested_quantity)
+        ):
             return PoolCheck(
                 result=PoolCheckResult.QUANTITY_EXCEEDED,
                 inventory=inv,
@@ -129,15 +153,17 @@ def check_label_in_shipment_pool(db: Session, label: str) -> PoolCheck:
                 shipment_label=allocation,
             )
 
+    # ── Etiket bir ShipmentLabel'da varsa FIFO grup kontenjan kontrolü ──
     if allocation:
         shipment = allocation.shipment
 
-        # Kontenjan hesabı (Group Quota Check)
         use_hourly = getattr(shipment, "hourly_fifo", False)
+
         def get_g_key(dt):
             return dt.replace(second=0, microsecond=0) if use_hourly else dt.date()
 
-        group_items_by_date = {}
+        # Sevkiyatın tüm ShipmentLabel'larını FIFO tarihine göre grupla
+        group_items_by_date: dict = {}
         for sl in shipment.shipment_labels:
             if not sl.inventory_label:
                 continue
@@ -147,13 +173,13 @@ def check_label_in_shipment_pool(db: Session, label: str) -> PoolCheck:
             group_items_by_date[g_key].append(sl)
 
         sorted_g_keys = sorted(group_items_by_date.keys())
-        quota_map = {}
+        quota_map: dict = {}
         cum_allocated = 0.0
         target = float(shipment.requested_quantity)
 
         for g_key in sorted_g_keys:
             sl_list = group_items_by_date[g_key]
-            group_stock = sum(float(sl.inventory_label.quantity) for sl in sl_list)
+            group_stock = sum(float(sl.allocated_quantity) for sl in sl_list)
             needed = max(0.0, target - cum_allocated)
             g_quota = min(needed, group_stock)
             quota_map[g_key] = g_quota
@@ -163,14 +189,18 @@ def check_label_in_shipment_pool(db: Session, label: str) -> PoolCheck:
         scanned_in_group = sum(
             float(sl.allocated_quantity)
             for sl in shipment.shipment_labels
-            if sl.inventory_label and get_g_key(sl.inventory_label.fifo_date) == inv_g_key and sl.status == ShipmentLabelStatus.SCANNED
+            if (
+                sl.inventory_label
+                and get_g_key(sl.inventory_label.fifo_date) == inv_g_key
+                and sl.status == ShipmentLabelStatus.SCANNED
+            )
         )
 
         inv_qty = float(inv.quantity)
         allowed_quota = quota_map.get(inv_g_key, 0.0)
 
         if scanned_in_group + inv_qty > allowed_quota:
-            # Grubun kontenjanı doldu!
+            # Grubun kontenjanı doldu — bu etiket havuz dışında
             return PoolCheck(
                 result=PoolCheckResult.OUTSIDE_POOL,
                 inventory=inv,
@@ -184,11 +214,13 @@ def check_label_in_shipment_pool(db: Session, label: str) -> PoolCheck:
             shipment_label=allocation,
         )
 
-    if shipment_for_ref:
+    # ── Etiket hiçbir sevkiyat havuzuna dahil değil ─────────────────────
+    # (Bu referanstan bir sevkiyat var ama etiket onun dışında)
+    if target_shipment:
         return PoolCheck(
             result=PoolCheckResult.OUTSIDE_POOL,
             inventory=inv,
-            shipment=shipment_for_ref,
+            shipment=target_shipment,
         )
 
     return PoolCheck(result=PoolCheckResult.OUTSIDE_POOL, inventory=inv)
