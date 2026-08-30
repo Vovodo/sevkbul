@@ -129,6 +129,8 @@ export default function App() {
           playMobileSound('duplicate');
         } else if (scanData.result === 'MİKTAR AŞILDI') {
           playMobileSound('exceeded');
+        } else if (scanData.result === 'ETİKET BULUNAMADI') {
+          playMobileSound('not_found');
         } else {
           playMobileSound('failure');
         }

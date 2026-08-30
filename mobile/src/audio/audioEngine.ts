@@ -173,11 +173,20 @@ function playMetalStrike(output: AudioNode, t: number) {
 }
 
 function playEmergencyBuzz(output: AudioNode, t: number) {
-  playTone(output, 380, t, 0.12, 'square', 0.9, 0.002);
-  playTone(output, 380, t + 0.14, 0.16, 'square', 1.0, 0.002);
+  // Acil İkaz Hörnü: Depo zemininde yankılanan güçlü çift buzzy ikaz kornosu
+  // 1. İkaz Korna Vuruşu (Buzzy Düşük Frekans)
+  playTone(output, 260, t, 0.15, 'sawtooth', 0.9, 0.003);
+  playTone(output, 130, t, 0.16, 'square', 0.85, 0.003);
+  playThump(output, t, 110, 0.13, 0.95);
+
+  // 2. İkaz Korna Vuruşu (Daha Yüksek ve Sert)
+  const t2 = t + 0.17;
+  playTone(output, 320, t2, 0.20, 'sawtooth', 1.0, 0.003);
+  playTone(output, 160, t2, 0.22, 'square', 0.9, 0.003);
+  playThump(output, t2, 130, 0.16, 1.0);
 }
 
-export type SoundCategory = 'success' | 'failure' | 'duplicate' | 'exceeded' | 'completion';
+export type SoundCategory = 'success' | 'failure' | 'duplicate' | 'exceeded' | 'completion' | 'not_found';
 
 export async function triggerHaptic(category: SoundCategory) {
   const settings = loadMobileAudioSettings();
@@ -185,7 +194,7 @@ export async function triggerHaptic(category: SoundCategory) {
   try {
     if (category === 'success' || category === 'completion') {
       await Haptics.notification({ type: NotificationType.Success });
-    } else if (category === 'exceeded' || category === 'duplicate') {
+    } else if (category === 'exceeded' || category === 'duplicate' || category === 'not_found') {
       await Haptics.notification({ type: NotificationType.Warning });
     } else {
       await Haptics.notification({ type: NotificationType.Error });
@@ -227,6 +236,8 @@ export function playMobileSound(category: SoundCategory, customSettings?: Mobile
     playDuplicateSound(output, t);
   } else if (category === 'exceeded') {
     playExceededSound(output, t);
+  } else if (category === 'not_found') {
+    playEmergencyBuzz(output, t);
   } else {
     switch (s.failureSound) {
       case 'hyper_error': playHyperError(output, t); break;

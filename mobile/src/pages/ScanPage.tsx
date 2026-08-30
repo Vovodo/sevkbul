@@ -66,6 +66,8 @@ export default function ScanPage({
         playMobileSound('duplicate');
       } else if (result.result === 'MİKTAR AŞILDI') {
         playMobileSound('exceeded');
+      } else if (result.result === 'ETİKET BULUNAMADI') {
+        playMobileSound('not_found');
       } else {
         playMobileSound('failure');
       }

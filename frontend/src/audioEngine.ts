@@ -440,7 +440,7 @@ export function previewFailureSound(id: FailureSoundId, settings?: AudioSettings
 }
 
 export function playResultSound(
-  category: 'success' | 'failure' | 'duplicate' | 'exceeded' | 'completion',
+  category: 'success' | 'failure' | 'duplicate' | 'exceeded' | 'completion' | 'not_found',
   settings?: AudioSettings,
 ) {
   const s = settings ?? loadAudioSettings();
@@ -460,6 +460,12 @@ export function playResultSound(
     const t = getContext().currentTime;
     const output = createSuccessChain(s, t, t + COMPLETION_DURATION);
     playMinecraftLevelUp(output, t);
+  } else if (category === 'not_found') {
+    // ETİKET BULUNAMADI: "Acil İkaz Hörnü 🔊" (Depo zemininde yankılanan çift buzzy ikaz kornosu)
+    const t = getContext().currentTime;
+    const dur = FAILURE_DURATIONS.emergency_buzz || 0.4;
+    const output = createFailureChain(s, t, t + dur);
+    playFailureEmergencyBuzz(output, t);
   } else {
     playFailurePreset(s.failureSound, s);
   }

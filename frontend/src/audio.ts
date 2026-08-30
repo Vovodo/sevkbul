@@ -10,6 +10,7 @@ export type ScanResultType =
 const SUCCESS_RESULTS = new Set<string>(['SEVKİYAT ÜRÜNÜ']);
 const DUPLICATE_RESULTS = new Set<string>(['ZATEN OKUTULDU']);
 const EXCEEDED_RESULTS = new Set<string>(['MİKTAR AŞILDI']);
+const NOT_FOUND_RESULTS = new Set<string>(['ETİKET BULUNAMADI']);
 
 export function initAudio() {
   warmupAudioEngine();
@@ -24,6 +25,8 @@ export function playScanSound(result: ScanResultType | 'COMPLETE') {
     playResultSound('duplicate');
   } else if (EXCEEDED_RESULTS.has(result)) {
     playResultSound('exceeded');
+  } else if (NOT_FOUND_RESULTS.has(result)) {
+    playResultSound('not_found');
   } else {
     playResultSound('failure');
   }
