@@ -99,12 +99,8 @@ export default function App() {
         // audio context
       }
 
-      // 3.5 saniye sonra bildirimi kaldır
-      setTimeout(() => {
-        setLastScan((prev) => (prev?.label === scanData.label ? null : prev));
-      }, 3500);
-
       setRecentScans((prev) => [
+
         {
           label: scanData.label,
           reference: scanData.reference,

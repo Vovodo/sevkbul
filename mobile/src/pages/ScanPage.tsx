@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Camera, CornerDownLeft, XCircle, CheckCircle, AlertTriangle, Ban, AlertCircle } from 'lucide-react';
+import { Camera, CornerDownLeft, XCircle, CheckCircle, AlertTriangle, Ban, AlertCircle, Maximize2 } from 'lucide-react';
 import { api, ScanResponse, ShipmentProgress, RecentScan } from '../api';
 import { playMobileSound, triggerTapHaptic } from '../audio/audioEngine';
 import CameraScannerModal from '../components/CameraScannerModal';
+import FullscreenScanModal from '../components/FullscreenScanModal';
 
 interface ScanPageProps {
   shipments: ShipmentProgress[];
@@ -26,6 +27,7 @@ export default function ScanPage({
   const [scanValue, setScanValue] = useState<string>('');
   const [isScanning, setIsScanning] = useState<boolean>(false);
   const [showCamera, setShowCamera] = useState<boolean>(false);
+  const [showFullscreen, setShowFullscreen] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -65,11 +67,6 @@ export default function ScanPage({
       }
 
       onRefreshShipments();
-
-      // Banner'ı 3.5 saniye sonra gizle
-      setTimeout(() => {
-        onSetLastScan(null);
-      }, 3500);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Okutma sırasında hata oluştu';
       setErrorMsg(msg);
@@ -80,6 +77,7 @@ export default function ScanPage({
       focusInput();
     }
   }, [focusInput, onRefreshShipments, onSetLastScan]);
+
 
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -174,18 +172,32 @@ export default function ScanPage({
           </div>
         </form>
 
-        {/* Camera Scanner Button */}
-        <button
-          type="button"
-          className="camera-launch-btn"
-          onClick={() => {
-            void triggerTapHaptic();
-            setShowCamera(true);
-          }}
-        >
-          <Camera size={18} />
-          <span>Kamera ile Tara</span>
-        </button>
+        {/* Scanner Action Buttons (Camera & Fullscreen) */}
+        <div className="scan-action-row">
+          <button
+            type="button"
+            className="camera-launch-btn"
+            onClick={() => {
+              void triggerTapHaptic();
+              setShowCamera(true);
+            }}
+          >
+            <Camera size={18} />
+            <span>Kamera ile Tara</span>
+          </button>
+
+          <button
+            type="button"
+            className="fs-launch-btn"
+            onClick={() => {
+              void triggerTapHaptic();
+              setShowFullscreen(true);
+            }}
+          >
+            <Maximize2 size={18} />
+            <span>Tam Ekran Modu</span>
+          </button>
+        </div>
       </div>
 
       {/* Error Alert */}
@@ -206,6 +218,17 @@ export default function ScanPage({
                 <div className="result-card-header">
                   <div className="result-card-icon">{badge.icon}</div>
                   <div className="result-card-title">{badge.title}</div>
+                  <button
+                    type="button"
+                    className="result-card-maximize-btn"
+                    onClick={() => {
+                      void triggerTapHaptic();
+                      setShowFullscreen(true);
+                    }}
+                    title="Tam Ekran"
+                  >
+                    <Maximize2 size={16} />
+                  </button>
                 </div>
 
                 <div className="result-card-meta">
@@ -291,6 +314,16 @@ export default function ScanPage({
         onClose={() => setShowCamera(false)}
         onScanResult={handleCameraScanResult}
       />
+
+      {/* Fullscreen Live Scan Modal */}
+      <FullscreenScanModal
+        isOpen={showFullscreen}
+        onClose={() => setShowFullscreen(false)}
+        lastScan={lastScan}
+        onScan={(val) => void executeScan(val)}
+        isScanning={isScanning}
+      />
     </div>
   );
 }
+
