@@ -50,6 +50,7 @@ class ShipmentCreateResponse(BaseModel):
 class ShipmentProgressSchema(BaseModel):
     shipment_id: int
     reference: str
+    name: str | None = None
     requested_quantity: float
     pool_quantity: float
     scanned_quantity: float

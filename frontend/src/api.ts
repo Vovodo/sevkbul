@@ -55,6 +55,7 @@ export interface ShipmentTarget {
 export interface ShipmentProgress {
   shipment_id: number;
   reference: string;
+  name?: string | null;
   requested_quantity: number;
   pool_quantity: number;
   scanned_quantity: number;
@@ -185,5 +186,12 @@ export const api = {
   undoScan: (shipmentId: number, label: string) =>
     request<ShipmentProgress>(`/api/shipment/${shipmentId}/scans/${encodeURIComponent(label)}`, {
       method: 'DELETE',
+    }),
+
+  renameShipment: (shipmentId: number, name: string) =>
+    request<ShipmentProgress>(`/api/shipment/${shipmentId}/name`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
     }),
 };

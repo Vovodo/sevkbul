@@ -13,7 +13,7 @@ from app.schemas import (
 )
 from app.services.target_service import list_targets, add_target, clear_targets, find_shipments
 from app.services.shipment_excel_import import import_shipment_targets_excel
-from app.services.shipment_service import get_active_shipments, get_shipment_progress
+from app.services.shipment_service import get_active_shipments, get_shipment_progress, rename_shipment
 from app.services.scan_service import process_global_scan
 from app.services.operation_service import (
     reset_active_shipments, get_scanned_labels, undo_scan, get_shipment_manifest
@@ -176,3 +176,20 @@ def global_scan(req: ScanRequest, db: Session = Depends(get_db)):
     )
     _broadcast_full_status(db, "scan", {"scan": scan_result.model_dump()})
     return scan_result
+
+
+from pydantic import BaseModel as _BaseModel
+
+class _RenameRequest(_BaseModel):
+    name: str
+
+
+@router.patch("/{shipment_id}/name", response_model=ShipmentProgressSchema)
+def rename_shipment_endpoint(shipment_id: int, req: _RenameRequest, db: Session = Depends(get_db)):
+    """Sevkiyata kullanıcı dostu bir isim ver (ör. 'TIR-1 Yükleme')."""
+    try:
+        progress = rename_shipment(db, shipment_id, req.name)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    _broadcast_full_status(db, "rename", {"shipment_id": shipment_id, "name": req.name})
+    return ShipmentProgressSchema(**progress)

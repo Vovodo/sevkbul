@@ -1727,3 +1727,129 @@ body.fs-active .op-scan-input {
 }
 
 
+/* ═══════════════════════════════════════════════════════════════
+   SHIPMENT CARD V2 — Numaralı, yeniden adlandırılabilir kartlar
+   ═══════════════════════════════════════════════════════════════ */
+.shipment-card-v2 {
+  border: 1px solid #374151;
+  border-radius: 12px;
+  margin-bottom: 0.85rem;
+  background: #111827;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+.shipment-card-v2.sc-done { border-color: #065f46; background: #052e16; }
+.shipment-card-v2.sc-active { border-color: #1e3a5f; }
+.shipment-card-v2:hover { border-color: #4b5563; }
+
+/* Header row */
+.sc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.8rem 1rem;
+  cursor: pointer;
+  user-select: none;
+  gap: 0.5rem;
+}
+.sc-header:hover { background: rgba(255,255,255,0.03); }
+
+/* Sol: index + name */
+.sc-title-group { display: flex; align-items: center; gap: 0.65rem; flex: 1; min-width: 0; }
+.sc-index {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: #1d4ed8;
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.sc-done .sc-index { background: #065f46; }
+
+.sc-name-wrap { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+.sc-name {
+  font-size: 0.95rem; font-weight: 600;
+  color: #e5e7eb;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 240px;
+}
+.sc-edit-btn {
+  background: none; border: none;
+  cursor: pointer; font-size: 0.8rem;
+  opacity: 0.5; padding: 2px 4px;
+  border-radius: 4px;
+  transition: opacity 0.15s, background 0.15s;
+}
+.sc-edit-btn:hover { opacity: 1; background: rgba(255,255,255,0.08); }
+.sc-name-input {
+  background: #1f2937; border: 1px solid #3b82f6;
+  border-radius: 6px; padding: 3px 8px;
+  color: #e5e7eb; font-size: 0.9rem;
+  outline: none; min-width: 160px;
+}
+
+/* Sağ: durum + chevron */
+.sc-header-right { display: flex; align-items: center; gap: 0.6rem; flex-shrink: 0; }
+.sc-status-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 600;
+}
+.pill-done  { background: rgba(16,185,129,.15); color: #34d399; }
+.pill-active { background: rgba(59,130,246,.15); color: #93c5fd; }
+.sc-chevron { font-size: 0.85rem; color: #6b7280; }
+
+/* Progress row */
+.sc-progress-row {
+  padding: 0 1rem 0.75rem;
+  cursor: pointer;
+}
+.sc-ref { font-size: 0.78rem; color: #6b7280; margin-bottom: 4px; }
+.sc-progress-nums { display: flex; justify-content: space-between; font-size: 0.8rem; color: #9ca3af; margin-bottom: 5px; }
+.sc-pct { font-weight: 700; color: #d1d5db; }
+.sc-progress-track { height: 6px; background: #1f2937; border-radius: 999px; overflow: hidden; }
+.sc-progress-fill { height: 100%; border-radius: 999px; transition: width 0.4s; }
+.sc-progress-fill.fill-active { background: linear-gradient(90deg, #3b82f6, #06b6d4); }
+.sc-progress-fill.fill-done   { background: linear-gradient(90deg, #10b981, #34d399); }
+
+/* Body (expanded) */
+.sc-body { padding: 0 1rem 1rem; border-top: 1px solid #1f2937; }
+.sc-actions { display: flex; gap: 0.5rem; padding: 0.75rem 0 0.5rem; flex-wrap: wrap; }
+
+/* Manifest */
+.sc-manifest { background: #0d1117; border-radius: 8px; margin-bottom: 0.75rem; overflow: hidden; }
+.sc-manifest-header { padding: 0.5rem 0.75rem; border-bottom: 1px solid #1f2937; font-size: 0.82rem; color: #9ca3af; }
+.sc-manifest-table { font-size: 0.8rem; }
+.sc-manifest-thead {
+  display: grid; grid-template-columns: 2fr 1fr 1.4fr 1.2fr;
+  padding: 0.4rem 0.75rem;
+  color: #4b5563; font-size: 0.72rem; text-transform: uppercase;
+  border-bottom: 1px solid #1f2937;
+}
+.sc-manifest-row {
+  display: grid; grid-template-columns: 2fr 1fr 1.4fr 1.2fr;
+  padding: 0.35rem 0.75rem;
+  border-bottom: 1px solid #111827;
+  align-items: center;
+}
+.sc-manifest-row:hover { background: rgba(255,255,255,0.02); }
+.row-scanned  { background: rgba(16,185,129,0.05); }
+.row-partial  { background: rgba(245,158,11,0.05); }
+.row-pending  { }
+.sc-item-status { font-size: 0.72rem; }
+.mono { font-family: 'Courier New', Courier, monospace; font-size: 0.8rem; }
+
+/* Scanned list */
+.sc-scanned-section { margin-top: 0.5rem; }
+.sc-scanned-title { font-size: 0.82rem; color: #6b7280; margin-bottom: 0.4rem; padding-bottom: 0.3rem; border-bottom: 1px solid #1f2937; }
+.sc-scanned-list { display: flex; flex-direction: column; gap: 4px; }
+.sc-scanned-row {
+  display: flex; align-items: center; gap: 0.75rem;
+  background: #0d1117; border-radius: 6px;
+  padding: 0.4rem 0.6rem; font-size: 0.8rem;
+}
+.sc-scan-label { font-family: monospace; flex: 1; color: #d1d5db; }
+.sc-scan-qty { color: #9ca3af; white-space: nowrap; }
+.sc-scan-fifo { color: #4b5563; font-size: 0.72rem; white-space: nowrap; }
+.sc-empty { color: #4b5563; font-size: 0.82rem; padding: 0.5rem 0; text-align: center; }

@@ -51,11 +51,13 @@ class Shipment(Base):
     requested_quantity = Column(Numeric(12, 2), nullable=False)
     status = Column(SAEnum(ShipmentStatus), default=ShipmentStatus.ACTIVE, index=True)
     hourly_fifo = Column(Boolean, default=False, nullable=False)
+    name = Column(String(200), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
 
     shipment_labels = relationship("ShipmentLabel", back_populates="shipment", cascade="all, delete-orphan")
     scan_logs = relationship("ScanLog", back_populates="shipment", cascade="all, delete-orphan")
+
 
 
 class ShipmentLabel(Base):

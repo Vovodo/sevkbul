@@ -188,6 +188,7 @@ def get_shipment_progress(db: Session, shipment_id: int) -> dict:
     return {
         "shipment_id": shipment.id,
         "reference": shipment.reference,
+        "name": shipment.name,
         "requested_quantity": requested,
         "pool_quantity": pool_f,
         "scanned_quantity": scanned_f,
@@ -196,6 +197,17 @@ def get_shipment_progress(db: Session, shipment_id: int) -> dict:
         "status": shipment.status.value,
         "is_complete": shipment.status == ShipmentStatus.COMPLETED,
     }
+
+
+def rename_shipment(db: Session, shipment_id: int, name: str) -> dict:
+    """Sevkiyata kullanıcı dostu bir isim ata (ör. 'TIR-1 Yükleme')."""
+    shipment = db.query(Shipment).filter(Shipment.id == shipment_id).first()
+    if not shipment:
+        raise ValueError("Sevkiyat bulunamadı")
+    shipment.name = name.strip() or None
+    db.commit()
+    return get_shipment_progress(db, shipment_id)
+
 
 
 def complete_shipment_if_ready(db: Session, shipment_id: int) -> bool:

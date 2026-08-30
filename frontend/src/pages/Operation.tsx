@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { api, ShipmentProgress, ScanResponse, ShipmentTarget, RecentScan, ScannedLabel } from '../api';
+import { api, ShipmentProgress, ScanResponse, ShipmentTarget, RecentScan } from '../api';
 import { playScanSound, getResultStyle, initAudio, ScanResultType } from '../audio';
 import SoundSettings from '../components/SoundSettings';
 import ManifestModal from '../components/ManifestModal';
 import MobileDownloadModal from '../components/MobileDownloadModal';
+import ShipmentCard from '../components/ShipmentCard';
 import Logo from '../components/Logo';
 import { useLiveUpdates, WsMessage } from '../useLiveUpdates';
 
@@ -25,7 +26,6 @@ export default function OperationPage() {
   const [lastScan, setLastScan] = useState<ScanResponse | null>(null);
   const [recentScans, setRecentScans] = useState<RecentScan[]>([]);
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [scannedMap, setScannedMap] = useState<Record<number, ScannedLabel[]>>({});
   const [loading, setLoading] = useState('');
   const [error, setError] = useState('');
   const [hourlyFifo, setHourlyFifo] = useState<boolean>(() => {
@@ -151,7 +151,6 @@ export default function OperationPage() {
       setPhase('setup');
       setShowSetup(true);
       setExpandedId(null);
-      setScannedMap({});
       setRecentScans([]);
       setLastScan(null);
       // Hedefleri de güncelle
@@ -205,14 +204,6 @@ export default function OperationPage() {
       setTimeout(() => {
         setLastScan(prev => prev?.label === scanData.label ? null : prev);
       }, 3500);
-    }
-
-
-    // Okutma veya undo sonrası genişletilmiş sevkiyatın etiketlerini güncelle
-    if ((msg.event === 'scan' || msg.event === 'undo') && expandedId != null) {
-      api.getScannedLabels(expandedId).then(labels => {
-        setScannedMap(prev => ({ ...prev, [expandedId]: labels }));
-      }).catch(() => {});
     }
   }, [phase, expandedId]);
 
@@ -291,7 +282,6 @@ export default function OperationPage() {
       setPhase('setup');
       setShowSetup(true);
       setExpandedId(null);
-      setScannedMap({});
       setRecentScans([]);
       setLastScan(null);
     } catch (e: unknown) {
@@ -305,33 +295,12 @@ export default function OperationPage() {
     api.getShipmentStatus().then(setShipments).catch(() => {});
   };
 
-  const loadScanned = async (shipmentId: number) => {
-    try {
-      const labels = await api.getScannedLabels(shipmentId);
-      setScannedMap(prev => ({ ...prev, [shipmentId]: labels }));
-    } catch {
-      setScannedMap(prev => ({ ...prev, [shipmentId]: [] }));
-    }
-  };
-
-  const toggleExpand = async (shipmentId: number) => {
-    if (expandedId === shipmentId) {
-      setExpandedId(null);
-      return;
-    }
-    setExpandedId(shipmentId);
-    if (!scannedMap[shipmentId]) {
-      await loadScanned(shipmentId);
-    }
-  };
-
   const handleUndoScan = async (shipmentId: number, label: string) => {
     if (!window.confirm(`${label} okutmasını kaldırmak istiyor musunuz?`)) return;
     setError('');
     try {
       const updated = await api.undoScan(shipmentId, label);
       setShipments(prev => prev.map(s => s.shipment_id === shipmentId ? updated : s));
-      await loadScanned(shipmentId);
       setRecentScans(prev => prev.filter(s => !(s.label === label && s.result === 'SEVKİYAT ÜRÜNÜ')));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Okutma kaldırılamadı');
@@ -539,63 +508,30 @@ export default function OperationPage() {
 
       {shipments.length > 0 && (
         <section className="op-section">
-          <h2>SEVKİYAT HAZIR</h2>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+            <h2 style={{ margin: 0 }}>SEVKİYATLAR ({shipments.length})</h2>
+            <button
+              className="op-btn secondary compact"
+              type="button"
+              onClick={() => setShowSetup(v => !v)}
+            >
+              {showSetup ? '⬆ Formu Gizle' : '+ Yeni Sevkiyat'}
+            </button>
+          </div>
           <div className="op-shipment-table">
-            {shipments.map(s => {
-              const expanded = expandedId === s.shipment_id;
-              const scanned = scannedMap[s.shipment_id] || [];
-              const isDone = s.is_complete || s.status === 'completed';
-              return (
-                <div key={s.shipment_id} className={`op-shipment-block ${expanded ? 'expanded' : ''} ${isDone ? 'completed' : ''}`}>
-                  <button
-                    type="button"
-                    className="op-shipment-row clickable"
-                    onClick={() => toggleExpand(s.shipment_id)}
-                  >
-                    <div className="op-shipment-ref">
-                      <span className="op-expand-icon">{expanded ? '▼' : '▶'}</span>
-                      {s.reference}
-                    </div>
-                    <div className="op-shipment-target">Hedef: {s.requested_quantity}</div>
-                    <div className="op-shipment-progress">
-                      <span>{s.scanned_quantity} / {s.requested_quantity}</span>
-                      <div className="op-progress-bar">
-                        <div className={`op-progress-fill ${isDone ? 'done' : ''}`} style={{ width: `${Math.min(s.progress_percent, 100)}%` }} />
-                      </div>
-                    </div>
-                    <div className={`op-status ${isDone ? 'done' : s.scanned_quantity > 0 ? 'active' : 'wait'}`}>
-                      {statusLabel(s)}
-                    </div>
-                  </button>
-
-                  {expanded && (
-                    <div className="op-scanned-list">
-                      <div className="op-scanned-header">
-                        Okutulan Etiketler ({scanned.length})
-                      </div>
-                      {scanned.length === 0 ? (
-                        <div className="op-scanned-empty">Henüz okutma yok</div>
-                      ) : (
-                        scanned.map(item => (
-                          <div key={item.label} className="op-scanned-item">
-                            <span className="op-scanned-label">{item.label}</span>
-                            <span>{item.quantity} adet</span>
-                            <span className="op-scanned-fifo">FIFO: {item.fifo_date}</span>
-                            <button
-                              type="button"
-                              className="op-btn danger compact"
-                              onClick={() => handleUndoScan(s.shipment_id, item.label)}
-                            >
-                              Kaldır
-                            </button>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {shipments.map((s, idx) => (
+              <ShipmentCard
+                key={s.shipment_id}
+                shipment={s}
+                index={idx + 1}
+                onUndoScan={handleUndoScan}
+                onRename={(id, name) => {
+                  setShipments(prev => prev.map(sh =>
+                    sh.shipment_id === id ? { ...sh, name: name || null } : sh
+                  ));
+                }}
+              />
+            ))}
           </div>
         </section>
       )}

@@ -198,6 +198,7 @@ export default function App() {
             }}
             onResetShipments={handleReset}
             onNavigateToManifest={() => setActiveTab('manifest')}
+            onNavigateToSetup={() => setActiveTab('setup')}
           />
         )}
 
