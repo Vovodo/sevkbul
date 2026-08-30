@@ -22,6 +22,15 @@ export default function App() {
   const [stockCount, setStockCount] = useState<number>(0);
   const [showSoundModal, setShowSoundModal] = useState<boolean>(false);
 
+  // Okutma bildirimi banner'ını webdeki gibi 3.5 saniye sonra otomatik kaldır
+  useEffect(() => {
+    if (!lastScan) return;
+    const timer = setTimeout(() => {
+      setLastScan(null);
+    }, 3500);
+    return () => clearTimeout(timer);
+  }, [lastScan]);
+
   // Aktif seçili sevkiyat grubunu otomatik belirle
   useEffect(() => {
     if (groups.length > 0) {

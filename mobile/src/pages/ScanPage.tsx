@@ -307,17 +307,30 @@ export default function ScanPage({
                 <div className="result-card-header">
                   <div className="result-card-icon">{badge.icon}</div>
                   <div className="result-card-title">{badge.title}</div>
-                  <button
-                    type="button"
-                    className="result-card-maximize-btn"
-                    onClick={() => {
-                      void triggerTapHaptic();
-                      setShowFullscreen(true);
-                    }}
-                    title="Tam Ekran"
-                  >
-                    <Maximize2 size={16} />
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                    <button
+                      type="button"
+                      className="result-card-maximize-btn"
+                      onClick={() => {
+                        void triggerTapHaptic();
+                        setShowFullscreen(true);
+                      }}
+                      title="Tam Ekran"
+                    >
+                      <Maximize2 size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      className="result-card-maximize-btn"
+                      onClick={() => {
+                        void triggerTapHaptic();
+                        onSetLastScan(null);
+                      }}
+                      title="Kapat"
+                    >
+                      <XCircle size={16} />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="result-card-meta">
