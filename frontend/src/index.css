@@ -1822,13 +1822,13 @@ body.fs-active .op-scan-input {
 .sc-manifest-header { padding: 0.5rem 0.75rem; border-bottom: 1px solid #1f2937; font-size: 0.82rem; color: #9ca3af; }
 .sc-manifest-table { font-size: 0.8rem; }
 .sc-manifest-thead {
-  display: grid; grid-template-columns: 2fr 1fr 1.4fr 1.2fr;
+  display: grid; grid-template-columns: 2fr 1fr 1.4fr 1.6fr;
   padding: 0.4rem 0.75rem;
   color: #4b5563; font-size: 0.72rem; text-transform: uppercase;
   border-bottom: 1px solid #1f2937;
 }
 .sc-manifest-row {
-  display: grid; grid-template-columns: 2fr 1fr 1.4fr 1.2fr;
+  display: grid; grid-template-columns: 2fr 1fr 1.4fr 1.6fr;
   padding: 0.35rem 0.75rem;
   border-bottom: 1px solid #111827;
   align-items: center;

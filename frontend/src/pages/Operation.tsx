@@ -224,10 +224,10 @@ export default function OperationPage() {
         time: new Date().toLocaleTimeString('tr-TR'),
       }, ...prev].slice(0, 30));
 
-      // Bildirim banner'ını 3.5 saniye göster
+      // Bildirim banner'ını 1.1 saniye göster
       setTimeout(() => {
         setLastScan(prev => prev?.label === scanData.label ? null : prev);
-      }, 3500);
+      }, 1100);
     }
   }, [phase]);
 

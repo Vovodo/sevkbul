@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { api, ShipmentGroup, ShipmentProgress, ScannedLabel, ShipmentManifestItem } from '../api';
+import { api, ShipmentGroup, ShipmentProgress, ShipmentManifestItem } from '../api';
 
 interface ShipmentCardProps {
   group: ShipmentGroup;
@@ -20,11 +20,8 @@ export default function ShipmentCard({
 }: ShipmentCardProps) {
   const [expanded, setExpanded] = useState(true);
 
-  // Reference-level details state
+  // Reference-level details state (FIFO manifest with live status & undo)
   const [expandedRefs, setExpandedRefs] = useState<Record<number, boolean>>({});
-  const [activeRefTab, setActiveRefTab] = useState<Record<number, 'scanned' | 'fifo'>>({});
-  const [scannedMap, setScannedMap] = useState<Record<number, ScannedLabel[]>>({});
-  const [loadingScanned, setLoadingScanned] = useState<Record<number, boolean>>({});
   const [manifestMap, setManifestMap] = useState<Record<number, ShipmentManifestItem[]>>({});
   const [loadingManifest, setLoadingManifest] = useState<Record<number, boolean>>({});
 
@@ -79,23 +76,7 @@ export default function ShipmentCard({
     setExpandedRefs(prev => ({ ...prev, [shipmentId]: nextState }));
 
     if (nextState) {
-      if (!activeRefTab[shipmentId]) {
-        setActiveRefTab(prev => ({ ...prev, [shipmentId]: 'scanned' }));
-      }
-      loadScannedForRef(shipmentId);
       loadManifestForRef(shipmentId);
-    }
-  };
-
-  const loadScannedForRef = async (shipmentId: number) => {
-    setLoadingScanned(prev => ({ ...prev, [shipmentId]: true }));
-    try {
-      const labels = await api.getScannedLabels(shipmentId);
-      setScannedMap(prev => ({ ...prev, [shipmentId]: labels }));
-    } catch {
-      setScannedMap(prev => ({ ...prev, [shipmentId]: [] }));
-    } finally {
-      setLoadingScanned(prev => ({ ...prev, [shipmentId]: false }));
     }
   };
 
@@ -112,12 +93,11 @@ export default function ShipmentCard({
     }
   };
 
-  // Whenever group data updates (e.g. after a scan), auto-refresh any open reference's scanned labels and manifest!
+  // Whenever group data updates (e.g. after a scan), auto-refresh any open reference's manifest!
   useEffect(() => {
     Object.keys(expandedRefs).forEach(key => {
       const sid = Number(key);
       if (expandedRefs[sid]) {
-        loadScannedForRef(sid);
         loadManifestForRef(sid);
       }
     });
@@ -125,7 +105,6 @@ export default function ShipmentCard({
 
   const handleUndo = async (shipmentId: number, label: string) => {
     await onUndoScan(shipmentId, label);
-    await loadScannedForRef(shipmentId);
     await loadManifestForRef(shipmentId);
   };
 
@@ -214,8 +193,6 @@ export default function ShipmentCard({
               const itemDone = item.is_complete || item.scanned_quantity >= item.requested_quantity;
               const itemPct = item.requested_quantity > 0 ? (item.scanned_quantity / item.requested_quantity) * 100 : 0;
               const isItemExpanded = !!expandedRefs[item.shipment_id];
-              const curTab = activeRefTab[item.shipment_id] || 'scanned';
-              const scannedList = scannedMap[item.shipment_id] || [];
               const manifestList = manifestMap[item.shipment_id] || [];
 
               return (
@@ -274,102 +251,69 @@ export default function ShipmentCard({
                     />
                   </div>
 
-                  {/* Reference Expanded Details (Okutulanlar + FIFO Manifest) */}
+                  {/* Reference Expanded Details (Tek Pencereli FIFO Manifest & Okutulan/Kaldır Listesi) */}
                   {isItemExpanded && (
                     <div style={{ padding: '0.65rem 0.8rem', borderTop: '1px solid #1f2937' }}>
-                      {/* Tabs */}
-                      <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.6rem' }}>
-                        <button
-                          type="button"
-                          className={`op-btn compact ${curTab === 'scanned' ? 'primary' : 'secondary'}`}
-                          onClick={() => setActiveRefTab(prev => ({ ...prev, [item.shipment_id]: 'scanned' }))}
-                          style={{ fontSize: '0.75rem', padding: '3px 8px' }}
-                        >
-                          Okutulan Etiketler ({scannedMap[item.shipment_id] ? scannedList.length : (item.scanned_label_count ?? 0)})
-                        </button>
-                        <button
-                          type="button"
-                          className={`op-btn compact ${curTab === 'fifo' ? 'primary' : 'secondary'}`}
-                          onClick={() => setActiveRefTab(prev => ({ ...prev, [item.shipment_id]: 'fifo' }))}
-                          style={{ fontSize: '0.75rem', padding: '3px 8px' }}
-                        >
-                          📋 FIFO Listesi ({manifestMap[item.shipment_id] ? manifestList.length : (manifestList.length || '...')})
-                        </button>
-                      </div>
-
-                      {/* Tab 1: Okutulan Etiketler */}
-                      {curTab === 'scanned' && (
-                        <div>
-                          {loadingScanned[item.shipment_id] ? (
-                            <div className="sc-empty">Yükleniyor...</div>
-                          ) : scannedList.length === 0 ? (
-                            <div className="sc-empty">Henüz okutulan etiket yok</div>
-                          ) : (
-                            <div className="sc-scanned-list">
-                              {scannedList.map(sc => (
-                                <div key={sc.label} className="sc-scanned-row">
-                                  <span className="mono sc-scan-label">{sc.label}</span>
-                                  <span className="sc-scan-qty">{sc.quantity} adet</span>
-                                  <span className="sc-scan-fifo">FIFO: {sc.fifo_date}</span>
-                                  <button
-                                    type="button"
-                                    className="op-btn danger compact"
-                                    onClick={e => {
-                                      e.stopPropagation();
-                                      handleUndo(item.shipment_id, sc.label);
-                                    }}
-                                  >
-                                    Kaldır
-                                  </button>
-                                </div>
-                              ))}
+                      <div className="sc-manifest" style={{ margin: 0 }}>
+                        {loadingManifest[item.shipment_id] ? (
+                          <div className="sc-empty">Yükleniyor...</div>
+                        ) : manifestList.length === 0 ? (
+                          <div className="sc-empty">FIFO adayı bulunamadı</div>
+                        ) : (
+                          <div className="sc-manifest-table">
+                            <div className="sc-manifest-thead">
+                              <span>Etiket</span>
+                              <span>Miktar</span>
+                              <span>FIFO Tarihi</span>
+                              <span style={{ textAlign: 'right' }}>Durum / İşlem</span>
                             </div>
-                          )}
-                        </div>
-                      )}
+                            {manifestList.map(m => {
+                              const isScanned = m.status === 'scanned' || m.is_scanned;
+                              const isPartial = m.status === 'partial';
 
-                      {/* Tab 2: FIFO Listesi */}
-                      {curTab === 'fifo' && (
-                        <div className="sc-manifest">
-                          {loadingManifest[item.shipment_id] ? (
-                            <div className="sc-empty">Yükleniyor...</div>
-                          ) : manifestList.length === 0 ? (
-                            <div className="sc-empty">FIFO adayı bulunamadı</div>
-                          ) : (
-                            <div className="sc-manifest-table">
-                              <div className="sc-manifest-thead">
-                                <span>Etiket</span>
-                                <span>Miktar</span>
-                                <span>FIFO Tarihi</span>
-                                <span>Durum</span>
-                              </div>
-                              {manifestList.map(m => (
+                              return (
                                 <div
                                   key={m.label}
                                   className={`sc-manifest-row ${
-                                    m.status === 'scanned'
+                                    isScanned
                                       ? 'row-scanned'
-                                      : m.status === 'partial'
+                                      : isPartial
                                       ? 'row-partial'
                                       : 'row-pending'
                                   }`}
                                 >
-                                  <span className="mono">{m.label}</span>
-                                  <span>{m.quantity}</span>
-                                  <span>{m.fifo_date}</span>
-                                  <span className="sc-item-status">
-                                    {m.status === 'scanned'
-                                      ? '✅ Okutuldu'
-                                      : m.status === 'partial'
-                                      ? '⚡ Kısmi'
-                                      : '⏳ Bekliyor'}
-                                  </span>
+                                  <span className="mono" style={{ fontWeight: 600 }}>{m.label}</span>
+                                  <span>{m.quantity} adet</span>
+                                  <span style={{ color: '#9ca3af', fontSize: '0.75rem' }}>{m.fifo_date}</span>
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                                    <span className="sc-item-status">
+                                      {isScanned
+                                        ? '✅ Okutuldu'
+                                        : isPartial
+                                        ? '⚡ Kısmi'
+                                        : '⏳ Bekliyor'}
+                                    </span>
+                                    {(isScanned || isPartial) && (
+                                      <button
+                                        type="button"
+                                        className="op-btn danger compact"
+                                        style={{ fontSize: '0.7rem', padding: '1px 7px', lineHeight: 1.2 }}
+                                        onClick={e => {
+                                          e.stopPropagation();
+                                          handleUndo(item.shipment_id, m.label);
+                                        }}
+                                        title="Okutmayı Sevkiyattan Kaldır"
+                                      >
+                                        Kaldır
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
