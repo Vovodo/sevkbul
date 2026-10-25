@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { getApiBase } from './api';
 
 export function getWsUrl(): string {
@@ -14,7 +14,7 @@ export function getWsUrl(): string {
   return 'wss://sevkbulapi.rfqcollector.com/ws';
 }
 
-export type WsEventType = 'scan' | 'undo' | 'reset' | 'find' | 'target_add' | 'target_clear' | 'target_import' | 'stock_import';
+export type WsEventType = 'scan' | 'undo' | 'reset' | 'find' | 'target_add' | 'target_clear' | 'target_import' | 'stock_import' | 'group_delete' | 'recalculate' | 'recalculate_progress';
 
 export interface WsMessage {
   event: WsEventType;
@@ -28,10 +28,11 @@ type WsMessageHandler = (msg: WsMessage) => void;
  * Gerçek zamanlı güncelleme WebSocket hook'u.
  * Otomatik yeniden bağlanma desteği ile.
  */
-export function useLiveUpdates(onMessage: WsMessageHandler) {
+export function useLiveUpdates(onMessage: WsMessageHandler): boolean {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handlerRef = useRef(onMessage);
+  const [connected, setConnected] = useState(false);
   handlerRef.current = onMessage;
 
   const connect = useCallback(() => {
@@ -44,7 +45,7 @@ export function useLiveUpdates(onMessage: WsMessageHandler) {
     const ws = new WebSocket(url);
 
     ws.onopen = () => {
-      // Bağlantı kuruldu — reconnect zamanlayıcısını temizle
+      setConnected(true);
       if (reconnectTimer.current) {
         clearTimeout(reconnectTimer.current);
         reconnectTimer.current = null;
@@ -61,8 +62,8 @@ export function useLiveUpdates(onMessage: WsMessageHandler) {
     };
 
     ws.onclose = () => {
+      setConnected(false);
       wsRef.current = null;
-      // 3 saniye sonra yeniden bağlan
       reconnectTimer.current = setTimeout(connect, 3000);
     };
 
@@ -90,10 +91,12 @@ export function useLiveUpdates(onMessage: WsMessageHandler) {
         clearTimeout(reconnectTimer.current);
       }
       if (wsRef.current) {
-        wsRef.current.onclose = null; // Unmount'ta yeniden bağlanmayı engelle
+        wsRef.current.onclose = null;
         wsRef.current.close();
         wsRef.current = null;
       }
     };
   }, [connect]);
+
+  return connected;
 }

@@ -42,20 +42,23 @@ class TestFifoGroupEngine:
         assert len(labels) == 8
         assert result.pool_quantity == Decimal("240")
 
-    def test_200_request_includes_entire_boundary_group(self):
-        """200 adet talep — 10.07 grubunun tamamı dahil (240 havuz)."""
+    def test_200_request_does_not_lock_rest_of_boundary_day(self):
+        """200 adet: 8 ve 9 Temmuz 120, 10 Temmuz'dan yalnızca 80 bağlanır."""
         items = [
             make_item("A001", 30, 8), make_item("A002", 30, 8),
             make_item("A003", 30, 9), make_item("A004", 30, 9),
-            make_item("A005", 30, 10), make_item("A006", 30, 10),
-            make_item("A007", 30, 10), make_item("A008", 30, 10),
+            make_item("A005", 30, 10, hour=8), make_item("A006", 30, 10, hour=9),
+            make_item("A007", 30, 10, hour=14), make_item("A008", 30, 10, hour=17),
             make_item("A009", 30, 11), make_item("A010", 30, 11),
         ]
         result = calculate_fifo_groups(items, Decimal("200"))
-        labels = {a.label for a in result.allocations}
-        assert {"A005", "A006", "A007", "A008"}.issubset(labels)
-        assert "A009" not in labels
-        assert "A010" not in labels
+        by_label = {a.label: a.allocated_quantity for a in result.allocations}
+        assert by_label["A005"] == Decimal("30")
+        assert by_label["A006"] == Decimal("30")
+        assert by_label["A007"] == Decimal("20")
+        assert "A008" not in by_label
+        assert "A009" not in by_label
+        assert "A010" not in by_label
         assert result.pool_quantity == Decimal("200")
         assert result.remaining_unfulfilled == Decimal("0")
 

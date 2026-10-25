@@ -1,13 +1,15 @@
 import { useState, useRef, useEffect } from 'react';
-import { api, ShipmentGroup, ShipmentProgress, ShipmentManifestItem } from '../api';
+import { ChevronDown, ChevronUp, Pencil, TriangleAlert } from 'lucide-react';
+import { api, CandidateLabel, ShipmentGroup, ShipmentManifest, ShipmentProgress, ShipmentManifestItem } from '../api';
 
 interface ShipmentCardProps {
   group: ShipmentGroup;
-  index: number; // 1-bazlı sıra numarası
+  index: number;
   isSelected?: boolean;
   onSelect?: () => void;
   onUndoScan: (shipmentId: number, label: string) => Promise<void>;
   onRenameGroup: (groupId: number, name: string) => void;
+  onRemove: (groupId: number) => void;
 }
 
 export default function ShipmentCard({
@@ -17,19 +19,31 @@ export default function ShipmentCard({
   onSelect,
   onUndoScan,
   onRenameGroup,
+  onRemove,
 }: ShipmentCardProps) {
-  const [expanded, setExpanded] = useState(true);
-
-  // Reference-level details state (FIFO manifest with live status & undo)
+  const [expanded, setExpanded] = useState(false);
   const [expandedRefs, setExpandedRefs] = useState<Record<number, boolean>>({});
   const [manifestMap, setManifestMap] = useState<Record<number, ShipmentManifestItem[]>>({});
   const [loadingManifest, setLoadingManifest] = useState<Record<number, boolean>>({});
+  const [openDate, setOpenDate] = useState<Record<number, string | null>>({});
+  const [candidateMap, setCandidateMap] = useState<Record<string, CandidateLabel[]>>({});
+  const [loadingDate, setLoadingDate] = useState<string | null>(null);
 
-  // Group name editing state
   const [editing, setEditing] = useState(false);
   const [nameInput, setNameInput] = useState(g.name || '');
   const [savingName, setSavingName] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
+  const prevQty = useRef(g.scanned_quantity);
+  const [livePulse, setLivePulse] = useState(false);
+  const manifestMapRef = useRef(manifestMap);
+  const candidateMapRef = useRef(candidateMap);
+  const expandedRefsRef = useRef(expandedRefs);
+  const openDateRef = useRef(openDate);
+  const manifestFlight = useRef<Promise<ShipmentManifest[]> | null>(null);
+  manifestMapRef.current = manifestMap;
+  candidateMapRef.current = candidateMap;
+  expandedRefsRef.current = expandedRefs;
+  openDateRef.current = openDate;
 
   const isDone = g.is_complete || g.status === 'completed';
   const progress = Math.min(g.progress_percent, 100);
@@ -39,9 +53,13 @@ export default function ShipmentCard({
     setNameInput(g.name || '');
   }, [g.name]);
 
-  const toggleExpand = () => {
-    setExpanded(prev => !prev);
-  };
+  useEffect(() => {
+    if (prevQty.current === g.scanned_quantity) return;
+    prevQty.current = g.scanned_quantity;
+    setLivePulse(true);
+    const timer = window.setTimeout(() => setLivePulse(false), 700);
+    return () => window.clearTimeout(timer);
+  }, [g.scanned_quantity]);
 
   const saveName = async () => {
     if (savingName) return;
@@ -71,83 +89,132 @@ export default function ShipmentCard({
     setTimeout(() => nameRef.current?.focus(), 30);
   };
 
-  const toggleRefItem = async (shipmentId: number) => {
-    const nextState = !expandedRefs[shipmentId];
-    setExpandedRefs(prev => ({ ...prev, [shipmentId]: nextState }));
-
-    if (nextState) {
-      loadManifestForRef(shipmentId);
+  const fetchManifest = () => {
+    if (!manifestFlight.current) {
+      manifestFlight.current = api.getManifest().finally(() => {
+        manifestFlight.current = null;
+      });
     }
+    return manifestFlight.current;
   };
 
-  const loadManifestForRef = async (shipmentId: number) => {
-    setLoadingManifest(prev => ({ ...prev, [shipmentId]: true }));
+  const applyManifest = async (ids: number[]) => {
+    if (!ids.length) return;
+    const pending = ids.filter(id => manifestMapRef.current[id] == null);
+    if (pending.length) {
+      setLoadingManifest(prev => {
+        const next = { ...prev };
+        pending.forEach(id => { next[id] = true; });
+        return next;
+      });
+    }
     try {
-      const all = await api.getManifest();
-      const match = all.find(m => m.shipment_id === shipmentId);
-      setManifestMap(prev => ({ ...prev, [shipmentId]: match?.items || [] }));
+      const all = await fetchManifest();
+      setManifestMap(prev => {
+        const next = { ...prev };
+        ids.forEach(id => {
+          next[id] = all.find(m => m.shipment_id === id)?.items || [];
+        });
+        return next;
+      });
     } catch {
-      setManifestMap(prev => ({ ...prev, [shipmentId]: [] }));
+      setManifestMap(prev => {
+        const next = { ...prev };
+        ids.forEach(id => {
+          if (next[id] == null) next[id] = [];
+        });
+        return next;
+      });
     } finally {
-      setLoadingManifest(prev => ({ ...prev, [shipmentId]: false }));
+      if (pending.length) {
+        setLoadingManifest(prev => {
+          const next = { ...prev };
+          pending.forEach(id => { next[id] = false; });
+          return next;
+        });
+      }
     }
   };
 
-  // Whenever group data updates (e.g. after a scan), auto-refresh any open reference's manifest!
+  const loadCandidates = async (shipmentId: number, fifoGroup: string, quiet = false) => {
+    const key = `${shipmentId}|${fifoGroup}`;
+    const known = candidateMapRef.current[key] != null;
+    if (!quiet && !known) setLoadingDate(key);
+    try {
+      const res = await api.getCandidates(shipmentId, fifoGroup);
+      setCandidateMap(prev => ({ ...prev, [key]: res.labels }));
+    } catch {
+      if (!known) setCandidateMap(prev => ({ ...prev, [key]: [] }));
+    } finally {
+      setLoadingDate(current => (current === key ? null : current));
+    }
+  };
+
   useEffect(() => {
-    Object.keys(expandedRefs).forEach(key => {
-      const sid = Number(key);
-      if (expandedRefs[sid]) {
-        loadManifestForRef(sid);
-      }
+    const ids = Object.entries(expandedRefsRef.current)
+      .filter(([, open]) => open)
+      .map(([id]) => Number(id));
+    if (ids.length) void applyManifest(ids);
+    Object.entries(openDateRef.current).forEach(([sid, date]) => {
+      if (date) void loadCandidates(Number(sid), date, true);
     });
-  }, [g, expandedRefs]);
+  }, [g]);
+
+  const toggleRefItem = (shipmentId: number) => {
+    const opening = !expandedRefs[shipmentId];
+    setExpandedRefs(prev => ({ ...prev, [shipmentId]: opening }));
+    if (opening) void applyManifest([shipmentId]);
+  };
+
+  const toggleDate = (shipmentId: number, fifoGroup: string) => {
+    const opening = openDate[shipmentId] !== fifoGroup;
+    setOpenDate(prev => ({
+      ...prev,
+      [shipmentId]: opening ? fifoGroup : null,
+    }));
+    if (opening) {
+      const key = `${shipmentId}|${fifoGroup}`;
+      void loadCandidates(shipmentId, fifoGroup, candidateMapRef.current[key] != null);
+    }
+  };
 
   const handleUndo = async (shipmentId: number, label: string) => {
     await onUndoScan(shipmentId, label);
-    await loadManifestForRef(shipmentId);
+    await applyManifest([shipmentId]);
+    const date = openDate[shipmentId];
+    if (date) await loadCandidates(shipmentId, date, true);
   };
 
   return (
-    <div className={`shipment-card-v2 ${isDone ? 'sc-done' : 'sc-active'} ${isSelected ? 'sc-selected' : ''}`}>
-      {/* ── Kart Başlığı ── */}
-      <div className="sc-header" onClick={toggleExpand}>
-        {/* Sol: Sıra numarası + isim */}
-        <div className="sc-title-group">
-          <span className="sc-index">{index}</span>
-          <div className="sc-name-wrap">
-            {editing ? (
-              <input
-                ref={nameRef}
-                className="sc-name-input"
-                value={nameInput}
-                onChange={e => setNameInput(e.target.value)}
-                onBlur={saveName}
-                onKeyDown={handleNameKeyDown}
-                onClick={e => e.stopPropagation()}
-                placeholder={`${index}. Sevkiyat`}
-                maxLength={80}
-                disabled={savingName}
-              />
-            ) : (
-              <span className="sc-name">{displayName}</span>
-            )}
-            <button
-              className="sc-edit-btn"
-              onClick={startEditing}
-              title="İsim Düzenle"
-              type="button"
-            >
-              ✏️
-            </button>
-            <span style={{ fontSize: '0.8rem', color: '#9ca3af', marginLeft: '6px' }}>
-              ({g.items.length} Referans)
-            </span>
-          </div>
+    <article className={`shipment-card-v2 ${isDone ? 'sc-done' : 'sc-active'} ${isSelected ? 'sc-selected' : ''} ${livePulse ? 'sc-pulse' : ''}`}>
+      <div className="sc-line" onClick={() => setExpanded(v => !v)}>
+        <span className="sc-index">{index}</span>
+        <div className="sc-name-wrap" onClick={e => e.stopPropagation()}>
+          {editing ? (
+            <input
+              ref={nameRef}
+              className="sc-name-input"
+              value={nameInput}
+              onChange={e => setNameInput(e.target.value)}
+              onBlur={saveName}
+              onKeyDown={handleNameKeyDown}
+              placeholder={`${index}. Sevkiyat`}
+              maxLength={80}
+              disabled={savingName}
+            />
+          ) : (
+            <span className="sc-name" onClick={() => setExpanded(v => !v)}>{displayName}</span>
+          )}
+          <button className="sc-edit-btn" onClick={startEditing} title="İsim Düzenle" type="button">
+            <Pencil size={12} />
+          </button>
         </div>
-
-        {/* Sağ: Seçim Butonu + Durum pill + expand ikon */}
-        <div className="sc-header-right" onClick={e => e.stopPropagation()}>
+        <span className="sc-line-track" aria-hidden>
+          <span className={`sc-progress-fill ${isDone ? 'fill-done' : 'fill-active'}`} style={{ width: `${progress}%` }} />
+        </span>
+        <span className="sc-line-qty">{g.scanned_quantity}/{g.requested_quantity}</span>
+        <span className={`sc-status-pill ${isDone ? 'pill-done' : 'pill-active'}`}>{isDone ? 'Tamam' : 'Açık'}</span>
+        <span className="sc-line-actions" onClick={e => e.stopPropagation()}>
           {onSelect && (
             <button
               type="button"
@@ -155,173 +222,129 @@ export default function ShipmentCard({
               onClick={onSelect}
               title={isSelected ? 'Şu an bu sevkiyat okutuluyor' : 'Okutmak için bu sevkiyatı seç'}
             >
-              {isSelected ? '🎯 SEÇİLİ HEDEF' : 'Okutmak İçin Seç'}
+              {isSelected ? 'Seçili' : 'Seç'}
             </button>
           )}
-          <span className={`sc-status-pill ${isDone ? 'pill-done' : 'pill-active'}`}>
-            {isDone ? '✅ Tamamlandı' : '🔄 Devam Ediyor'}
-          </span>
-          <span className="sc-chevron" onClick={toggleExpand} style={{ cursor: 'pointer' }}>
-            {expanded ? '▲' : '▼'}
-          </span>
-        </div>
+          <button type="button" className="sc-remove-btn" onClick={() => onRemove(g.group_id)} title="Bu sevkiyatı kaldır">
+            Kaldır
+          </button>
+        </span>
+        <span className="sc-chevron">{expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</span>
       </div>
 
-      {/* ── Toplam İlerleme Progress Bar ── */}
-      <div className="sc-progress-row" onClick={toggleExpand}>
-        <div className="sc-progress-nums">
-          <span>Toplam Okutulan: <strong>{g.scanned_quantity} / {g.requested_quantity} adet</strong></span>
-          <span className="sc-pct">{Math.round(progress)}%</span>
-        </div>
-        <div className="sc-progress-track">
-          <div
-            className={`sc-progress-fill ${isDone ? 'fill-done' : 'fill-active'}`}
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-      </div>
-
-      {/* ── Açılan İçerik: Bu Sevkiyattaki Referanslar Listesi ── */}
       {expanded && (
-        <div className="sc-body" style={{ padding: '0.75rem 1rem 1rem' }}>
-          <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#9ca3af', marginBottom: '0.6rem' }}>
-            BU SEVKİYATTAKİ REFERANSLAR ({g.items.length})
-          </div>
+        <div className="sc-nest">
+          {g.items.map((item: ShipmentProgress) => {
+            const itemDone = item.is_complete || item.scanned_quantity >= item.requested_quantity;
+            const itemPct = item.requested_quantity > 0 ? (item.scanned_quantity / item.requested_quantity) * 100 : 0;
+            const isItemExpanded = !!expandedRefs[item.shipment_id];
+            const manifestList = manifestMap[item.shipment_id] || [];
+            const activeDate = openDate[item.shipment_id];
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-            {g.items.map((item: ShipmentProgress) => {
-              const itemDone = item.is_complete || item.scanned_quantity >= item.requested_quantity;
-              const itemPct = item.requested_quantity > 0 ? (item.scanned_quantity / item.requested_quantity) * 100 : 0;
-              const isItemExpanded = !!expandedRefs[item.shipment_id];
-              const manifestList = manifestMap[item.shipment_id] || [];
+            const short = Number(item.short_quantity || 0);
+            const fullyShort = short > 0 && short + 0.001 >= item.requested_quantity;
+            const shortText = fullyShort
+              ? 'Eksik'
+              : short > 0
+                ? `${new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 2 }).format(short)} eksik`
+                : '';
 
-              return (
-                <div
-                  key={item.shipment_id}
-                  style={{
-                    background: '#0d1117',
-                    border: '1px solid #1f2937',
-                    borderRadius: '8px',
-                    overflow: 'hidden',
-                  }}
+            return (
+              <div key={item.shipment_id} className={`sc-ref-frame${isItemExpanded ? ' is-open' : ''}${fullyShort ? ' is-stockout' : ''}${shortText && !fullyShort ? ' is-short' : ''}`}>
+                <button
+                  type="button"
+                  className={`sc-nest-ref${fullyShort ? ' is-stockout' : ''}`}
+                  onClick={() => { if (!fullyShort) toggleRefItem(item.shipment_id); }}
                 >
-                  {/* Reference Header Row */}
-                  <div
-                    onClick={() => toggleRefItem(item.shipment_id)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '0.6rem 0.8rem',
-                      cursor: 'pointer',
-                      background: isItemExpanded ? 'rgba(255,255,255,0.02)' : 'transparent',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, minWidth: 0 }}>
-                      <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-                        {isItemExpanded ? '▼' : '▶'}
-                      </span>
-                      <strong className="mono" style={{ fontSize: '0.9rem', color: '#f3f4f6' }}>
-                        {item.reference}
-                      </strong>
-                    </div>
+                  <span className="sc-ref-main">
+                    <span className="sc-ref-code">
+                      {shortText && <TriangleAlert size={12} aria-hidden />}
+                      {item.reference}
+                    </span>
+                    {shortText && <span className="sc-ref-note">{shortText}</span>}
+                  </span>
+                  <span className="sc-line-qty">{item.scanned_quantity}/{item.requested_quantity}</span>
+                  <span className={`sc-status-pill ${fullyShort ? 'pill-stockout' : itemDone ? 'pill-done' : 'pill-active'}`}>
+                    {fullyShort ? 'Eksik' : itemDone ? 'Tamam' : `%${Math.round(itemPct)}`}
+                  </span>
+                  <span className="sc-chevron">
+                    {!fullyShort && (isItemExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />)}
+                  </span>
+                </button>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
-                      <span style={{ fontSize: '0.82rem', color: '#9ca3af' }}>
-                        {item.scanned_quantity} / {item.requested_quantity} adet
-                      </span>
-                      <span
-                        className={`sc-status-pill ${itemDone ? 'pill-done' : 'pill-active'}`}
-                        style={{ fontSize: '0.68rem', padding: '1px 6px' }}
-                      >
-                        {itemDone ? '✓ TAMAM' : `%${Math.round(itemPct)}`}
-                      </span>
-                    </div>
-                  </div>
+                {isItemExpanded && !fullyShort && (
+                  <div className="sc-nest-dates">
+                    {loadingManifest[item.shipment_id] && manifestList.length === 0 ? (
+                      <div className="sc-empty">Tarihler yükleniyor</div>
+                    ) : manifestList.length === 0 ? (
+                      <div className="sc-empty">FIFO tarihi yok</div>
+                    ) : manifestList.map(m => {
+                      const scannedQty = m.scanned_quantity ?? 0;
+                      const filled = m.is_scanned || scannedQty >= m.quantity;
+                      const started = scannedQty > 0 && !filled;
+                      const state = filled ? 'filled' : started ? 'partial' : 'open';
+                      const stateLabel = m.outside_fifo ? 'FIFO dışı' : filled ? 'Doldu' : started ? 'Devam' : 'Açık';
+                      const dateOpen = activeDate === m.fifo_group_date;
+                      const dateKey = `${item.shipment_id}|${m.fifo_group_date}`;
+                      const reads = m.scanned_labels || [];
+                      const candidates = candidateMap[dateKey] || [];
+                      const pct = m.quantity > 0 ? Math.min(100, (scannedQty / m.quantity) * 100) : 0;
 
-                  {/* Reference Mini Progress Bar */}
-                  <div style={{ height: '3px', background: '#1f2937', width: '100%' }}>
-                    <div
-                      style={{
-                        height: '100%',
-                        width: `${Math.min(itemPct, 100)}%`,
-                        background: itemDone ? '#10b981' : '#3b82f6',
-                        transition: 'width 0.3s ease',
-                      }}
-                    />
-                  </div>
+                      return (
+                        <div key={m.fifo_group_date} className={m.outside_fifo ? 'is-outside' : ''}>
+                          <button
+                            type="button"
+                            className={`sc-nest-date${dateOpen ? ' is-open' : ''}`}
+                            onClick={() => toggleDate(item.shipment_id, m.fifo_group_date)}
+                          >
+                            <span className="sc-date-label">{m.fifo_group_date}</span>
+                            <span className="sc-mini-track" aria-hidden>
+                              <span className={`sc-date-fill${m.outside_fifo ? ' is-outside' : ''}`} style={{ width: `${pct}%` }} />
+                            </span>
+                            <span className="sc-line-qty">{scannedQty}/{m.quantity}</span>
+                            <span className={`sc-date-state state-${m.outside_fifo ? 'outside' : state}`}>
+                              {m.outside_fifo && <TriangleAlert size={11} aria-hidden />}
+                              {stateLabel}
+                            </span>
+                            <span className="sc-chevron">{dateOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}</span>
+                          </button>
 
-                  {/* Reference Expanded Details (Tek Pencereli FIFO Manifest & Okutulan/Kaldır Listesi) */}
-                  {isItemExpanded && (
-                    <div style={{ padding: '0.65rem 0.8rem', borderTop: '1px solid #1f2937' }}>
-                      <div className="sc-manifest" style={{ margin: 0 }}>
-                        {loadingManifest[item.shipment_id] ? (
-                          <div className="sc-empty">Yükleniyor...</div>
-                        ) : manifestList.length === 0 ? (
-                          <div className="sc-empty">FIFO adayı bulunamadı</div>
-                        ) : (
-                          <div className="sc-manifest-table">
-                            <div className="sc-manifest-thead">
-                              <span>Etiket</span>
-                              <span>Miktar</span>
-                              <span>FIFO Tarihi</span>
-                              <span style={{ textAlign: 'right' }}>Durum / İşlem</span>
+                          {dateOpen && (
+                            <div className="sc-nest-labels">
+                              {m.outside_fifo && (
+                                <span className="sc-date-flag">Bu tarihin önüne yeni FIFO geçti. Okutma duruyor.</span>
+                              )}
+                              {reads.map(read => (
+                                <span key={read.label} className={`sc-chip${read.outside_fifo ? ' sc-chip-outside' : ' sc-chip-read'}`}>
+                                  {read.outside_fifo && <TriangleAlert size={11} aria-hidden />}
+                                  <span>{read.label}</span>
+                                  <em>{read.quantity}</em>
+                                  <button type="button" onClick={() => handleUndo(item.shipment_id, read.label)}>Geri al</button>
+                                </span>
+                              ))}
+                              {loadingDate === dateKey && candidates.length === 0 ? (
+                                <span className="sc-empty">Etiketler yükleniyor</span>
+                              ) : candidates.map(label => (
+                                <span key={label.label} className="sc-chip sc-chip-open" title={label.fifo_time}>
+                                  <span>{label.label}</span>
+                                  <em>{label.quantity}</em>
+                                </span>
+                              ))}
+                              {loadingDate !== dateKey && reads.length === 0 && candidates.length === 0 && (
+                                <span className="sc-empty">Bu tarihte okutulacak etiket yok</span>
+                              )}
                             </div>
-                            {manifestList.map(m => {
-                              const isScanned = m.status === 'scanned' || m.is_scanned;
-                              const isPartial = m.status === 'partial';
-
-                              return (
-                                <div
-                                  key={m.label}
-                                  className={`sc-manifest-row ${
-                                    isScanned
-                                      ? 'row-scanned'
-                                      : isPartial
-                                      ? 'row-partial'
-                                      : 'row-pending'
-                                  }`}
-                                >
-                                  <span className="mono" style={{ fontWeight: 600 }}>{m.label}</span>
-                                  <span>{m.quantity} adet</span>
-                                  <span style={{ color: '#9ca3af', fontSize: '0.75rem' }}>{m.fifo_date}</span>
-                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.5rem' }}>
-                                    <span className="sc-item-status">
-                                      {isScanned
-                                        ? '✅ Okutuldu'
-                                        : isPartial
-                                        ? '⚡ Kısmi'
-                                        : '⏳ Bekliyor'}
-                                    </span>
-                                    {(isScanned || isPartial) && (
-                                      <button
-                                        type="button"
-                                        className="op-btn danger compact"
-                                        style={{ fontSize: '0.7rem', padding: '1px 7px', lineHeight: 1.2 }}
-                                        onClick={e => {
-                                          e.stopPropagation();
-                                          handleUndo(item.shipment_id, m.label);
-                                        }}
-                                        title="Okutmayı Sevkiyattan Kaldır"
-                                      >
-                                        Kaldır
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
-    </div>
+    </article>
   );
 }

@@ -1,6 +1,7 @@
 """End-to-end operation flow tests."""
 import sys
 import os
+import time
 from io import BytesIO
 
 import pytest
@@ -146,3 +147,243 @@ class TestOperationFlow:
 
         status = client.get("/api/shipment/status")
         assert status.json() == []
+
+    def test_single_target_can_be_removed(self, client):
+        first = client.post("/api/shipment/targets", json={"reference": "REF-A", "target_quantity": 15})
+        second = client.post("/api/shipment/targets", json={"reference": "REF-B", "target_quantity": 30})
+        assert first.status_code == 200
+        assert second.status_code == 200
+
+        removed = client.delete(f"/api/shipment/targets/{first.json()['id']}")
+        assert removed.status_code == 200
+
+        remaining = client.get("/api/shipment/targets")
+        assert remaining.status_code == 200
+        assert [row["reference"] for row in remaining.json()] == ["REF-B"]
+
+        missing = client.delete("/api/shipment/targets/999999")
+        assert missing.status_code == 404
+
+    def test_recalculate_uses_current_stock_and_keeps_scans(self, client):
+        def stock_file(rows):
+            wb = Workbook()
+            ws = wb.active
+            ws.append(["ETİKET", "REFERANS", "MİKTAR", "X98FIFO_TARIH"])
+            for row in rows:
+                ws.append(row)
+            buf = BytesIO()
+            wb.save(buf)
+            return buf.getvalue()
+
+        first = stock_file([
+            ["A001", "REF-X", 30, "01.06.2026 08:15"],
+            ["A002", "REF-X", 30, "02.06.2026 09:30"],
+            ["A003", "REF-X", 30, "03.06.2026 10:45"],
+        ])
+        uploaded = client.post("/api/inventory/import/stock", files={
+            "file": ("s.xlsx", first, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        })
+        assert uploaded.status_code == 200
+
+        client.post("/api/shipment/targets", json={"reference": "REF-X", "target_quantity": 60})
+        found = client.post("/api/shipment/find")
+        assert found.status_code == 200
+        shipment_id = found.json()["shipments"][0]["shipment_id"]
+
+        scan = client.post("/api/shipment/scan", json={"label": "A001"})
+        assert scan.status_code == 200
+        assert scan.json()["result"] == "SEVKİYAT ÜRÜNÜ"
+
+        extra = stock_file([
+            ["A000", "REF-X", 30, "20.05.2026 08:15"],
+        ])
+        appended = client.post(
+            "/api/inventory/import/stock?replace=false",
+            files={"file": ("s2.xlsx", extra, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert appended.status_code == 200
+
+        recalc = client.post("/api/shipment/recalculate")
+        assert recalc.status_code == 200
+        assert recalc.json()["status"] == "started"
+        status = {"phase": "running"}
+        for _ in range(100):
+            status = client.get("/api/shipment/recalculate/status").json()
+            if status["phase"] in ("done", "error"):
+                break
+            time.sleep(0.05)
+        assert status["phase"] == "done", status
+        assert status["updated"] == 1
+
+        manifest = client.get("/api/shipment/manifest").json()
+        item = next(row for row in manifest if row["shipment_id"] == shipment_id)
+        dates = {row["fifo_group_date"]: row for row in item["items"]}
+        assert item["scanned_quantity"] == 30
+        assert "20.05.2026" in dates
+        assert dates["20.05.2026"]["quantity"] == 30
+        assert dates["01.06.2026"]["scanned_quantity"] == 30
+        assert dates["01.06.2026"]["scanned_labels"][0]["label"] == "A001"
+        assert dates["20.05.2026"]["outside_fifo"] is False
+        assert dates["01.06.2026"]["outside_fifo"] is False
+        assert dates["01.06.2026"]["scanned_labels"][0]["outside_fifo"] is False
+        assert "02.06.2026" not in dates
+
+    def test_scan_outside_recalculated_window_is_marked(self, client):
+        def stock_file(rows):
+            wb = Workbook()
+            ws = wb.active
+            ws.append(["ETİKET", "REFERANS", "MİKTAR", "X98FIFO_TARIH"])
+            for row in rows:
+                ws.append(row)
+            buf = BytesIO()
+            wb.save(buf)
+            return buf.getvalue()
+
+        def wait_recalc():
+            started = client.post("/api/shipment/recalculate")
+            assert started.status_code == 200
+            status = {"phase": "running"}
+            for _ in range(100):
+                status = client.get("/api/shipment/recalculate/status").json()
+                if status["phase"] in ("done", "error"):
+                    break
+                time.sleep(0.05)
+            assert status["phase"] == "done", status
+
+        uploaded = client.post("/api/inventory/import/stock", files={
+            "file": ("s.xlsx", stock_file([
+                ["L1", "REF-X", 30, "01.06.2026 08:15"],
+                ["L2", "REF-X", 30, "02.06.2026 09:30"],
+                ["L7", "REF-X", 30, "07.06.2026 10:45"],
+            ]), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        })
+        assert uploaded.status_code == 200
+
+        client.post("/api/shipment/targets", json={"reference": "REF-X", "target_quantity": 30})
+        assert client.post("/api/shipment/find").status_code == 200
+        client.post("/api/shipment/targets", json={"reference": "REF-X", "target_quantity": 60})
+        assert client.post("/api/shipment/find").status_code == 200
+
+        groups = client.get("/api/shipment/groups").json()
+        early = next(g for g in groups if g["requested_quantity"] == 30)
+        later = next(g for g in groups if g["requested_quantity"] == 60)
+
+        scan = client.post("/api/shipment/scan", json={"label": "L7", "group_id": later["group_id"]})
+        assert scan.status_code == 200
+        assert scan.json()["result"] == "SEVKİYAT ÜRÜNÜ"
+
+        removed = client.delete(f"/api/shipment/group/{early['group_id']}")
+        assert removed.status_code == 200
+        wait_recalc()
+
+        manifest = client.get("/api/shipment/manifest").json()
+        item = next(row for row in manifest if row["shipment_id"] == later["items"][0]["shipment_id"])
+        dates = {row["fifo_group_date"]: row for row in item["items"]}
+        assert dates["01.06.2026"]["outside_fifo"] is False
+        assert dates["07.06.2026"]["outside_fifo"] is True
+        assert dates["07.06.2026"]["outside_reason"] == "window"
+        assert dates["07.06.2026"]["scanned_labels"][0]["label"] == "L7"
+        assert dates["07.06.2026"]["scanned_labels"][0]["outside_fifo"] is True
+
+        inside = client.post("/api/shipment/scan", json={"label": "L1", "group_id": later["group_id"]})
+        assert inside.status_code == 200
+        assert inside.json()["result"] == "SEVKİYAT ÜRÜNÜ"
+        manifest = client.get("/api/shipment/manifest").json()
+        item = next(row for row in manifest if row["shipment_id"] == later["items"][0]["shipment_id"])
+        dates = {row["fifo_group_date"]: row for row in item["items"]}
+        assert dates["01.06.2026"]["scanned_labels"][0]["outside_fifo"] is False
+        assert dates["07.06.2026"]["scanned_labels"][0]["outside_fifo"] is True
+
+    def test_fifo_date_lists_labels_that_can_still_be_scanned(self, client):
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["ETİKET", "REFERANS", "MİKTAR", "X98FIFO_TARIH"])
+        ws.append(["L1", "REF-X", 15, "01.06.2026 08:15"])
+        ws.append(["L2", "REF-X", 15, "01.06.2026 09:30"])
+        ws.append(["L3", "REF-X", 15, "02.06.2026 10:45"])
+        buf = BytesIO()
+        wb.save(buf)
+        uploaded = client.post("/api/inventory/import/stock", files={
+            "file": ("s.xlsx", buf.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        })
+        assert uploaded.status_code == 200
+        client.post("/api/shipment/targets", json={"reference": "REF-X", "target_quantity": 30})
+        found = client.post("/api/shipment/find")
+        assert found.status_code == 200
+        shipment_id = found.json()["shipments"][0]["shipment_id"]
+
+        open_day = client.get(f"/api/shipment/{shipment_id}/candidates", params={"fifo_group": "01.06.2026"})
+        assert open_day.status_code == 200
+        body = open_day.json()
+        assert body["remaining"] == 30
+        assert [row["label"] for row in body["labels"]] == ["L1", "L2"]
+
+        later = client.get(f"/api/shipment/{shipment_id}/candidates", params={"fifo_group": "02.06.2026"})
+        assert later.status_code == 200
+        assert later.json()["labels"] == []
+
+        scan = client.post("/api/shipment/scan", json={"label": "L1"})
+        assert scan.json()["result"] == "SEVKİYAT ÜRÜNÜ"
+        after = client.get(f"/api/shipment/{shipment_id}/candidates", params={"fifo_group": "01.06.2026"}).json()
+        assert [row["label"] for row in after["labels"]] == ["L2"]
+        assert after["remaining"] == 15
+
+    def test_headerless_shipment_excel_names_the_shipment(self, client):
+        client.post("/api/inventory/import/stock", files={
+            "file": ("s.xlsx", stock_excel(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        })
+
+        wb = Workbook()
+        ws = wb.active
+        ws["A1"] = "Genel rapor"
+        ws["C3"] = "Not"
+        ws["E6"] = "REF-X"
+        ws["F6"] = 30
+        ws["E7"] = "Başlık satırı"
+        buf = BytesIO()
+        wb.save(buf)
+
+        imported = client.post("/api/shipment/targets/import", files={
+            "file": (
+                "Merkez Depo.xlsx",
+                buf.getvalue(),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        })
+        assert imported.status_code == 200, imported.text
+        body = imported.json()
+        assert body["successful"] == 1
+        assert body["targets"][0]["reference"] == "REF-X"
+        assert body["targets"][0]["target_quantity"] == 30
+
+        found = client.post("/api/shipment/find")
+        assert found.status_code == 200
+        groups = client.get("/api/shipment/groups").json()
+        assert groups[0]["name"] == "Merkez Depo"
+
+    def test_text_instead_of_quantity_is_not_a_shipment_file(self, client):
+        kept = client.post("/api/shipment/targets", json={"reference": "REF-KEEP", "target_quantity": 12})
+        assert kept.status_code == 200
+
+        wb = Workbook()
+        ws = wb.active
+        ws["B4"] = "6036003-G"
+        ws["C4"] = "Depo"
+        ws["B5"] = "6036004-G"
+        ws["C5"] = "Açık"
+        buf = BytesIO()
+        wb.save(buf)
+
+        imported = client.post("/api/shipment/targets/import", files={
+            "file": (
+                "yanlis.xlsx",
+                buf.getvalue(),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        })
+        assert imported.status_code == 400
+        assert "sevkiyat formatına uygun değil" in imported.json()["detail"]
+
+        remaining = client.get("/api/shipment/targets").json()
+        assert [row["reference"] for row in remaining] == ["REF-KEEP"]
+        assert client.get("/api/shipment/groups").json() == []

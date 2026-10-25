@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Search, RefreshCw, CheckCircle2, Clock } from 'lucide-react';
+import { Search, RefreshCw, CheckCircle2, Clock, Globe } from 'lucide-react';
 import { ShipmentManifest } from '../api';
 import { triggerTapHaptic } from '../audio/audioEngine';
 
@@ -200,7 +200,7 @@ export default function ManifestPage({ manifests, onRefresh }: ManifestPageProps
                 cursor: 'pointer',
               }}
             >
-              🌐 Tümü ({manifests.length} Ref)
+              <Globe size={13} /> Tümü ({manifests.length})
             </button>
           )}
         </div>

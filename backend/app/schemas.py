@@ -60,6 +60,8 @@ class ShipmentProgressSchema(BaseModel):
     progress_percent: float
     status: str
     is_complete: bool
+    stock_note: str | None = None
+    short_quantity: float = 0
 
 
 class ShipmentGroupSchema(BaseModel):
@@ -183,14 +185,35 @@ class ShipmentImportResultSchema(BaseModel):
     shipments: list[ShipmentImportRowSchema]
 
 
+class CandidateLabelSchema(BaseModel):
+    label: str
+    quantity: float
+    fifo_time: str
+
+
+class CandidateListSchema(BaseModel):
+    remaining: float
+    labels: list[CandidateLabelSchema]
+
+
+class ManifestScannedLabelSchema(BaseModel):
+    label: str
+    quantity: float
+    outside_fifo: bool = False
+
+
 class ShipmentManifestItemSchema(BaseModel):
     label: str
     reference: str
     quantity: float
+    scanned_quantity: float = 0
     fifo_date: str
     fifo_group_date: str
     status: str
     is_scanned: bool
+    outside_fifo: bool = False
+    outside_reason: str | None = None
+    scanned_labels: list[ManifestScannedLabelSchema] = []
 
 
 class ShipmentManifestSchema(BaseModel):

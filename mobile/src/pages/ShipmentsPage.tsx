@@ -10,6 +10,9 @@ import {
   Edit2,
   Check,
   X,
+  ClipboardList,
+  Crosshair,
+  Package,
   Plus,
 } from 'lucide-react';
 import { api, ShipmentGroup, ShipmentProgress, ShipmentManifestItem } from '../api';
@@ -192,7 +195,7 @@ export default function ShipmentsPage({
 
       {groups.length === 0 ? (
         <div className="empty-state-card">
-          <div className="empty-icon">📦</div>
+          <div className="empty-icon"><Package size={28} /></div>
           <h3>Aktif Sevkiyat Yok</h3>
           <p>Lütfen Kurulum sekmesinden stok ve sevkiyat hedeflerini tanımlayarak FİFO hesabını başlatın.</p>
           {onNavigateToSetup && (
@@ -363,7 +366,7 @@ export default function ShipmentsPage({
                             whiteSpace: 'nowrap',
                           }}
                         >
-                          {isSelected ? '🎯 SEÇİLİ' : 'Seç & Okut'}
+                          {isSelected ? <><Crosshair size={12} /> Seçili</> : 'Seç ve okut'}
                         </button>
                       )}
                       <div className="card-expand-icon">
@@ -502,7 +505,7 @@ export default function ShipmentsPage({
                                                 whiteSpace: 'nowrap',
                                               }}
                                             >
-                                              {isScanned ? '✅ Okutuldu' : isPartial ? '⚡ Kısmi' : '⏳ Bekliyor'}
+                                              {isScanned ? 'Okutuldu' : isPartial ? 'Kısmi' : 'Bekliyor'}
                                             </span>
 
                                             {(isScanned || isPartial) && (
@@ -540,7 +543,7 @@ export default function ShipmentsPage({
           {/* Quick Action to Manifest */}
           <div className="manifest-shortcut-card">
             <button type="button" className="mobile-btn secondary full" onClick={onNavigateToManifest}>
-              📋 Tüm FİFO Manifestini ve Çıktı Tablosunu Görüntüle
+              <ClipboardList size={16} /> FIFO listesini görüntüle
             </button>
           </div>
         </div>

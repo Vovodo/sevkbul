@@ -3,8 +3,10 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
+from decimal import Decimal
+
 from app.models import (
-    Shipment, ShipmentStatus,
+    Shipment, ShipmentStatus, ShipmentLabel,
     ShipmentLabelStatus, ScanLog, ScanResult,
 )
 from app.services.lookup_cache import lookup_cache
@@ -12,6 +14,7 @@ from app.services.shipment_service import complete_shipment_if_ready
 from app.services.pool_validation import (
     check_label_in_shipment_pool, PoolCheckResult, log_scan_check,
 )
+from app.services.fifo_quota import group_key, quota_map, scanned_on_date
 
 
 @dataclass
@@ -90,7 +93,7 @@ def process_global_scan(
             fifo_date=fifo_str if inv else None,
         )
 
-    if check.result == PoolCheckResult.IN_POOL and check.shipment and check.shipment_label:
+    if check.result == PoolCheckResult.IN_POOL and check.shipment:
         log_scan_check(label, inv.id, fifo_str, True, "ACCEPT (IN_POOL)")
         return _accept_scan(db, check.shipment.id, actual_label, inv, check.shipment_label)
 
@@ -122,7 +125,7 @@ def _accept_scan(db, shipment_id: int, label: str, inv, sl) -> ScanResponse:
             fifo_date=inv.fifo_date.strftime("%d.%m.%Y %H:%M") if inv.fifo_date else None,
         )
 
-    if sl.status != ShipmentLabelStatus.PENDING:
+    if sl is not None and sl.status != ShipmentLabelStatus.PENDING:
         _log_scan(db, shipment_id, label, inv.id, ScanResult.ALREADY_SCANNED)
         return _build_response(
             ScanResult.ALREADY_SCANNED.value, label, shipment_id, db,
@@ -130,8 +133,40 @@ def _accept_scan(db, shipment_id: int, label: str, inv, sl) -> ScanResponse:
             already_scanned=True,
         )
 
-    sl.scanned_quantity = sl.allocated_quantity
+    key = group_key(inv.fifo_date, bool(shipment.hourly_fifo))
+    remaining = quota_map(db, shipment).get(key, Decimal("0")) - scanned_on_date(db, shipment, key)
+    take = min(Decimal(inv.quantity), remaining)
+    if take <= Decimal("0.001"):
+        _log_scan(db, shipment_id, label, inv.id, ScanResult.QUANTITY_EXCEEDED)
+        return _build_response(
+            ScanResult.QUANTITY_EXCEEDED.value, label, shipment_id, db,
+            reference=inv.reference, quantity=float(inv.quantity),
+            fifo_date=inv.fifo_date.strftime("%d.%m.%Y %H:%M") if inv.fifo_date else None,
+        )
+
+    if sl is None:
+        sl = ShipmentLabel(
+            shipment_id=shipment_id,
+            inventory_label_id=inv.id,
+            allocated_quantity=take,
+            scanned_quantity=Decimal("0"),
+            status=ShipmentLabelStatus.PENDING,
+        )
+        db.add(sl)
+        db.flush()
+
+    sl.scanned_quantity = take
     sl.status = ShipmentLabelStatus.SCANNED
+    if Decimal(sl.allocated_quantity) < take:
+        sl.allocated_quantity = take
+
+    # Tahmin listesindeki kilit kalkar; kota satırı durur.
+    db.query(ShipmentLabel).filter(
+        ShipmentLabel.inventory_label_id == inv.id,
+        ShipmentLabel.id != sl.id,
+        ShipmentLabel.status == ShipmentLabelStatus.PENDING,
+    ).delete(synchronize_session=False)
+
     db.commit()
 
     lookup_cache.mark_scanned(shipment_id, label)

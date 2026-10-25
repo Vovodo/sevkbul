@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Volume2, VolumeX, Smartphone, Play, Check, X } from 'lucide-react';
+import { Volume2, VolumeX, Smartphone, Play, Check, X, Ban, Trophy } from 'lucide-react';
 import {
   MobileAudioSettings,
   SuccessSoundId,
@@ -15,17 +15,17 @@ interface SoundSettingsModalProps {
 }
 
 const SUCCESS_OPTIONS: { id: SuccessSoundId; name: string }[] = [
-  { id: 'minecraft_levelup', name: '🎮 Minecraft Level Up (Tavsiye Edilen)' },
-  { id: 'cyber_chime', name: '🎵 Siber Melodi (Klasik Çan)' },
-  { id: 'industrial_laser', name: '⚡ Endüstriyel Lazer' },
-  { id: 'hyper_beep', name: '📟 Hiper El Terminali Bip' },
+  { id: 'minecraft_levelup', name: 'Minecraft seviye (önerilen)' },
+  { id: 'cyber_chime', name: 'Siber melodi' },
+  { id: 'industrial_laser', name: 'Endüstriyel lazer' },
+  { id: 'hyper_beep', name: 'Hiper el terminali bip' },
 ];
 
 const FAILURE_OPTIONS: { id: FailureSoundId; name: string }[] = [
-  { id: 'warehouse_alarm', name: '🚨 Depo İkaz Sireni' },
-  { id: 'hyper_error', name: '🚫 Hiper Red İkazı' },
-  { id: 'metal_strike', name: '💥 Metalik Sert İptal' },
-  { id: 'emergency_buzz', name: '⚠️ Acil İkaz Hörnü' },
+  { id: 'warehouse_alarm', name: 'Depo ikaz sireni' },
+  { id: 'hyper_error', name: 'Hiper red ikazı' },
+  { id: 'metal_strike', name: 'Metalik iptal' },
+  { id: 'emergency_buzz', name: 'Acil ikaz kornası' },
 ];
 
 export default function SoundSettingsModal({ isOpen, onClose }: SoundSettingsModalProps) {
@@ -211,11 +211,11 @@ export default function SoundSettingsModal({ isOpen, onClose }: SoundSettingsMod
                 <h4 className="section-subtitle">Özel Olay Testleri</h4>
                 <div className="special-preview-grid">
                   <button type="button" className="special-btn orange" onClick={handlePreviewExceeded}>
-                    <span>🚫 Miktar Aşıldı</span>
+                    <span><Ban size={13} /> Miktar aşıldı</span>
                     <Play size={13} />
                   </button>
                   <button type="button" className="special-btn green" onClick={handlePreviewCompletion}>
-                    <span>🏆 Tamamlanma</span>
+                    <span><Trophy size={13} /> Tamamlanma</span>
                     <Play size={13} />
                   </button>
                 </div>

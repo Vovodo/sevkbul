@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Camera, CornerDownLeft, XCircle, CheckCircle, AlertTriangle, Ban, AlertCircle, Maximize2 } from 'lucide-react';
+import { Camera, CornerDownLeft, XCircle, CheckCircle, AlertTriangle, Ban, AlertCircle, Maximize2, Crosshair, Repeat } from 'lucide-react';
 import { api, ScanResponse, ShipmentGroup, RecentScan } from '../api';
 import { playMobileSound, triggerTapHaptic } from '../audio/audioEngine';
 import CameraScannerModal from '../components/CameraScannerModal';
@@ -127,14 +127,14 @@ export default function ScanPage({
           <div className="summary-bar-info">
             <span className="summary-tag">{groups.length} Sevkiyat Aktif</span>
             <strong className="summary-qty">
-              {totalScanned} / {totalTarget} Adet ({isAllComplete ? 'TAMAMLANDI ✓' : `%${Math.round(totalTarget > 0 ? (totalScanned / totalTarget) * 100 : 0)}`})
+              {totalScanned} / {totalTarget} Adet ({isAllComplete ? 'Tamamlandı' : `%${Math.round(totalTarget > 0 ? (totalScanned / totalTarget) * 100 : 0)}`})
             </strong>
           </div>
           <div className="summary-bar-action">Detaylar ❯</div>
         </div>
       ) : (
         <div className="scan-empty-banner">
-          <span>⚠️ Henüz aktif bir sevkiyat hedefi bulunmuyor.</span>
+          <span><AlertTriangle size={16} /> Henüz aktif bir sevkiyat hedefi yok.</span>
           <button type="button" className="mobile-btn primary small" onClick={onNavigateToSetup}>
             Kurulum Yap
           </button>
@@ -156,6 +156,9 @@ export default function ScanPage({
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
               <span
                 style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.25rem',
                   background: '#2563eb',
                   color: '#fff',
                   fontSize: '0.65rem',
@@ -165,7 +168,7 @@ export default function ScanPage({
                   letterSpacing: '0.04em',
                 }}
               >
-                🎯 SEÇİLİ SEVKİYAT
+                <Crosshair size={12} /> Seçili sevkiyat
               </span>
               <strong style={{ fontSize: '0.9rem', color: '#fff' }}>{selectedTitle}</strong>
             </div>
@@ -213,7 +216,7 @@ export default function ScanPage({
                       cursor: 'pointer',
                     }}
                   >
-                    {isCur ? '🎯 ' : ''}{idx + 1}. {gName}
+                    {isCur ? <Crosshair size={11} /> : null} {idx + 1}. {gName}
                   </button>
                 );
               })}
@@ -389,7 +392,7 @@ export default function ScanPage({
               const isExceeded = item.result === 'MİKTAR AŞILDI';
               const isDup = item.result === 'ZATEN OKUTULDU';
               const itemClass = isOk ? 'is-ok' : isExceeded ? 'is-exceeded' : isDup ? 'is-dup' : 'is-err';
-              const icon = isOk ? '✓' : isExceeded ? '🚫' : isDup ? '⚠' : '✕';
+              const icon = isOk ? <CheckCircle size={14} /> : isExceeded ? <Ban size={14} /> : isDup ? <Repeat size={14} /> : <XCircle size={14} />;
 
               return (
                 <div key={idx} className={`recent-scan-item ${itemClass}`}>

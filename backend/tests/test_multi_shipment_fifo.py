@@ -159,15 +159,18 @@ class TestHourlyFifoMultiShipment:
         assert r3.pool_quantity == Decimal("60")
 
     def test_shipment4_has_no_available_stock(self, db):
-        """S4 (60): Tüm 180 adet tükenmiş → ValueError"""
+        """S4 (60): Tüm 180 adet tükenmiş → sevkiyat yine açılır, stok notuyla."""
         setup_six_labels(db)
         ref = "6681378-HZN-1"
         create_shipment_from_reference(db, ref, Decimal("60"), hourly_fifo=True)
         create_shipment_from_reference(db, ref, Decimal("60"), hourly_fifo=True)
         create_shipment_from_reference(db, ref, Decimal("60"), hourly_fifo=True)
 
-        with pytest.raises(ValueError, match="kullanılabilir stok kalmadı"):
-            create_shipment_from_reference(db, ref, Decimal("60"), hourly_fifo=True)
+        r4 = create_shipment_from_reference(db, ref, Decimal("60"), hourly_fifo=True)
+        assert r4.label_count == 0
+        assert r4.pool_quantity == Decimal("0")
+        assert r4.stock_note == "Eksik"
+        assert _get_allocated_labels(db, r4.shipment_id) == set()
 
     def test_fifo_order_strictly_preserved(self, db):
         """Sevkiyatlar arasında FIFO sıralaması bozulmamalı: S1 < S2 < S3."""
@@ -210,7 +213,7 @@ class TestDailyFifoMultiShipment:
         assert r1.pool_quantity == Decimal("60")
 
     def test_shipment2_gets_july_group_all_four(self, db):
-        """S2 (60): 23.07 grubu — tüm grup havuza girer, kota 60."""
+        """S2 (60): 23.07 grubundan kontenjan kadarını alır, günün kalanını kilitlemez."""
         setup_six_labels(db)
         ref = "6681378-HZN-1"
         create_shipment_from_reference(db, ref, Decimal("60"), hourly_fifo=False)
@@ -223,6 +226,49 @@ class TestDailyFifoMultiShipment:
         assert "700022382" not in labels2
         assert "700022545" not in labels2
         assert len(labels2.intersection(july_labels)) > 0
+
+    def test_same_day_remainder_is_not_locked_to_first_shipment(self, db):
+        """S1 60 alır. 23.07'deki 120 adedin kalan 60'sı S2'de okunabilir kalır."""
+        setup_six_labels(db)
+        ref = "6681378-HZN-1"
+        r1 = create_shipment_from_reference(db, ref, Decimal("60"), hourly_fifo=False)
+        r2 = create_shipment_from_reference(db, ref, Decimal("60"), hourly_fifo=False)
+
+        labels1 = _get_allocated_labels(db, r1.shipment_id)
+        labels2 = _get_allocated_labels(db, r2.shipment_id)
+        july = ["700024521", "700024537", "700024550", "700024778"]
+        assert labels1.isdisjoint(july)
+        assert labels2 == set(july[:2])
+        assert set(july[2:]).isdisjoint(labels2)
+
+        r3 = create_shipment_from_reference(db, ref, Decimal("60"), hourly_fifo=False)
+        labels3 = _get_allocated_labels(db, r3.shipment_id)
+        assert labels3 == set(july[2:])
+
+    def test_shared_date_label_scans_on_either_shipment(self, db):
+        """Aynı gün her iki sevkiyatta da açıksa etiket kilitlenmez."""
+        from app.models import ScanResult
+        from app.services.scan_service import process_global_scan
+
+        setup_six_labels(db)
+        ref = "6681378-HZN-1"
+        r1 = create_shipment_from_reference(db, ref, Decimal("90"), hourly_fifo=False)
+        r2 = create_shipment_from_reference(db, ref, Decimal("60"), hourly_fifo=False)
+
+        # 700024521, 1. sevkiyatın 23.07 payına yazılmış tahmindir.
+        # 2. sevkiyatın da 23.07 kotası vardır; okutma kabul edilir.
+        moved = process_global_scan(db, "700024521", target_shipment_id=r2.shipment_id)
+        assert moved.result == ScanResult.SHIPMENT_PRODUCT.value
+        assert moved.shipment_id == r2.shipment_id
+
+        # 2. sevkiyatın tahmini etiketini 1. sevkiyat da okuyabilir.
+        other = process_global_scan(db, "700024537", target_shipment_id=r1.shipment_id)
+        assert other.result == ScanResult.SHIPMENT_PRODUCT.value
+        assert other.shipment_id == r1.shipment_id
+
+        # Haziran, 2. sevkiyatın tarihinde değildir.
+        june = process_global_scan(db, "700022382", target_shipment_id=r2.shipment_id)
+        assert june.result == ScanResult.OUTSIDE_SHIPMENT.value
 
     def test_no_june_labels_in_shipment2(self, db):
         """S2'de Haziran etiketleri kesinlikle olmamalı."""
@@ -336,6 +382,10 @@ class TestSingleShipmentBackwardCompat:
         result = create_shipment_from_reference(db, "6681378-HZN-1", Decimal("200"), hourly_fifo=True)
         assert result.insufficient_stock is True
         assert result.remaining_unfulfilled == Decimal("20")
+        from app.services.shipment_service import get_shipment_progress
+        progress = get_shipment_progress(db, result.shipment_id)
+        assert progress["short_quantity"] == 20
+        assert progress["stock_note"] is None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -432,6 +482,31 @@ class TestFindShipmentsContinuity:
         dates1 = get_fifo_dates(labels1)
         dates2 = get_fifo_dates(labels2)
         assert max(dates1) <= min(dates2), "S2 etiketleri S1'dekinden daha yeni olmalı"
+
+    def test_exhausted_reference_is_published_inside_the_shipment(self, db):
+        """Stoku biten referans yayını durdurmaz; grupta kırmızı notla durur."""
+        from app.services.shipment_service import get_shipment_groups
+
+        setup_six_labels(db)
+        ref = "6681378-HZN-1"
+        add_target(db, ref, Decimal("180"))
+        first = find_shipments(db, hourly_fifo=False)
+        assert first["errors"] == []
+
+        add_target(db, ref, Decimal("30"))
+        add_target(db, "YOK-REF", Decimal("5"))
+        second = find_shipments(db, hourly_fifo=False)
+        assert second["errors"] == []
+        assert len(second["shipments"]) == 2
+
+        groups = get_shipment_groups(db)
+        assert len(groups) == 2
+        notes = {item["reference"]: item["stock_note"] for item in groups[1]["items"]}
+        assert notes[ref] == "Eksik"
+        assert notes["YOK-REF"] == "Eksik"
+        shorts = {item["reference"]: item["short_quantity"] for item in groups[1]["items"]}
+        assert shorts[ref] == 30
+        assert shorts["YOK-REF"] == 5
 
 
 # ─────────────────────────────────────────────────────────────────────────────

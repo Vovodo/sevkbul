@@ -1,11 +1,52 @@
+from datetime import datetime, timedelta
+from decimal import Decimal
+
 from sqlalchemy.orm import Session, joinedload
 
 from app.models import (
     Shipment, ShipmentLabel, ShipmentStatus, ShipmentLabelStatus,
-    ScanLog, ScanResult, InventoryLabel,
+    ShipmentDateQuota, ScanLog, ScanResult, InventoryLabel,
 )
+from app.services.fifo_quota import format_group, group_key, quota_map, scanned_on_date
 from app.services.lookup_cache import lookup_cache
-from app.services.shipment_service import get_shipment_progress
+from app.services.shipment_service import get_shipment_progress, ideal_fifo_dates
+
+
+def delete_shipment_group(db: Session, group_id: int) -> int:
+    """Tek bir sevkiyat grubunu, etiket ve okutma kayıtlarıyla birlikte siler.
+
+    Diğer sevkiyat gruplarına ve hedef listesine dokunmaz.
+    """
+    shipments = db.query(Shipment).filter(Shipment.group_id == group_id).all()
+    if not shipments:
+        # Eski kayıtlarda grup numarası yoktu; grup kimliği sevkiyatın kendi id'siydi.
+        # Gerçek bir grup varken aynı numaralı eski kaydı silme.
+        shipments = db.query(Shipment).filter(
+            Shipment.group_id.is_(None),
+            Shipment.id == group_id,
+        ).all()
+    if not shipments:
+        raise ValueError("Sevkiyat grubu bulunamadı")
+
+    shipment_ids = [s.id for s in shipments]
+    db.query(ShipmentDateQuota).filter(
+        ShipmentDateQuota.shipment_id.in_(shipment_ids)
+    ).delete(synchronize_session=False)
+    db.query(ShipmentLabel).filter(
+        ShipmentLabel.shipment_id.in_(shipment_ids)
+    ).delete(synchronize_session=False)
+    db.query(ScanLog).filter(
+        ScanLog.shipment_id.in_(shipment_ids)
+    ).delete(synchronize_session=False)
+    db.query(Shipment).filter(
+        Shipment.id.in_(shipment_ids)
+    ).delete(synchronize_session=False)
+    db.commit()
+
+    for sid in shipment_ids:
+        lookup_cache.unload_shipment(sid)
+    lookup_cache.rebuild_global_index()
+    return len(shipment_ids)
 
 
 def reset_active_shipments(db: Session) -> int:
@@ -20,6 +61,10 @@ def reset_active_shipments(db: Session) -> int:
 
     if shipment_ids:
         # 1. Sevkiyatlara bağlı etiketleri sil
+        db.query(ShipmentDateQuota).filter(
+            ShipmentDateQuota.shipment_id.in_(shipment_ids)
+        ).delete(synchronize_session=False)
+
         db.query(ShipmentLabel).filter(
             ShipmentLabel.shipment_id.in_(shipment_ids)
         ).delete(synchronize_session=False)
@@ -167,42 +212,59 @@ def get_shipment_manifest(db: Session) -> list[dict]:
     )
 
     manifests = []
+    ideal = ideal_fifo_dates(db, shipments)
     for s in shipments:
         prog = get_shipment_progress(db, s.id)
 
-        # Havuzdaki tüm aday etiketler
-        sls = (
+        use_hourly = bool(getattr(s, "hourly_fifo", False))
+        quotas = quota_map(db, s)
+        inside = ideal.get(s.id, set())
+        scanned_rows = (
             db.query(ShipmentLabel)
             .options(joinedload(ShipmentLabel.inventory_label))
-            .filter(ShipmentLabel.shipment_id == s.id)
+            .filter(
+                ShipmentLabel.shipment_id == s.id,
+                ShipmentLabel.status.in_([ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL]),
+            )
             .all()
         )
-
-        items = []
-        for sl in sls:
+        scanned_by_date: dict = {}
+        for sl in scanned_rows:
             inv = sl.inventory_label
             if not inv:
                 continue
-            is_scanned = sl.status == ShipmentLabelStatus.SCANNED
-            
-            use_hourly = getattr(s, "hourly_fifo", False)
-            group_fmt = inv.fifo_date.strftime("%d.%m.%Y %H:%M") if use_hourly else inv.fifo_date.strftime("%d.%m.%Y")
+            key = group_key(inv.fifo_date, use_hourly)
+            scanned_by_date.setdefault(key, []).append(sl)
 
+        items = []
+        for key in sorted(quotas):
+            quota = float(quotas[key])
+            done = float(scanned_on_date(db, s, key))
+            filled = done >= quota - 0.001
+            # Uyarı yalnızca yeniden hesapta bu tarihin yerini daha eski bir FIFO aldıysa.
+            outside = key not in inside and done > 0.001
+            label_rows = scanned_by_date.get(key, [])
             items.append({
-                "label": inv.label,
-                "reference": inv.reference,
-                "quantity": float(sl.allocated_quantity),
-                "fifo_date": inv.fifo_date.strftime("%d.%m.%Y %H:%M"),
-                "fifo_group_date": group_fmt,
-                "status": sl.status.value if hasattr(sl.status, "value") else str(sl.status),
-                "is_scanned": is_scanned,
-                "_fifo_sort_key": inv.fifo_date,
+                "label": format_group(key, use_hourly),
+                "reference": s.reference,
+                "quantity": quota,
+                "scanned_quantity": done,
+                "fifo_date": format_group(key, use_hourly),
+                "fifo_group_date": format_group(key, use_hourly),
+                "status": "scanned" if filled else "pending",
+                "is_scanned": filled,
+                "outside_fifo": outside,
+                "outside_reason": "window" if outside else None,
+                "scanned_labels": [
+                    {
+                        "label": sl.inventory_label.label,
+                        "quantity": float(sl.scanned_quantity or 0),
+                        "outside_fifo": outside,
+                    }
+                    for sl in label_rows
+                    if sl.inventory_label
+                ],
             })
-
-        # Etiketleri FIFO tarihine (en eski en üstte) göre sırala
-        items.sort(key=lambda x: x["_fifo_sort_key"])
-        for item in items:
-            item.pop("_fifo_sort_key", None)
 
         manifests.append({
             "shipment_id": s.id,
@@ -221,4 +283,55 @@ def get_shipment_manifest(db: Session) -> list[dict]:
         })
 
     return manifests
+
+
+def list_candidate_labels(db: Session, shipment_id: int, fifo_group: str) -> dict:
+    """Bir FIFO tarihinde henüz okutulmamış, bu sevkiyata kabul edilecek etiketler."""
+    shipment = db.query(Shipment).filter(Shipment.id == shipment_id).first()
+    if shipment is None or shipment.status not in (ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED):
+        raise ValueError("Sevkiyat bulunamadı")
+
+    hourly = bool(shipment.hourly_fifo)
+    try:
+        parsed = datetime.strptime(fifo_group.strip(), "%d.%m.%Y %H:%M" if hourly else "%d.%m.%Y")
+    except ValueError as exc:
+        raise ValueError("FIFO tarihi okunamadı") from exc
+
+    key = group_key(parsed, hourly)
+    quota = quota_map(db, shipment).get(key, Decimal("0"))
+    done = scanned_on_date(db, shipment, key)
+    remaining = quota - done
+    if remaining < 0:
+        remaining = Decimal("0")
+
+    end = key + (timedelta(minutes=1) if hourly else timedelta(days=1))
+    rows = (
+        db.query(InventoryLabel)
+        .filter(
+            InventoryLabel.reference == shipment.reference,
+            InventoryLabel.fifo_date >= key,
+            InventoryLabel.fifo_date < end,
+        )
+        .order_by(InventoryLabel.fifo_date.asc(), InventoryLabel.id.asc())
+        .all()
+    )
+    labels = []
+    if remaining > 0 and rows:
+        consumed = {
+            row[0]
+            for row in db.query(ShipmentLabel.inventory_label_id).filter(
+                ShipmentLabel.inventory_label_id.in_([row.id for row in rows]),
+                ShipmentLabel.status.in_([ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL]),
+            ).all()
+        }
+        for inv in rows:
+            if inv.id in consumed or Decimal(inv.quantity) <= 0:
+                continue
+            labels.append({
+                "label": inv.label,
+                "quantity": float(inv.quantity),
+                "fifo_time": inv.fifo_date.strftime("%H:%M"),
+            })
+
+    return {"remaining": float(remaining), "labels": labels}
 

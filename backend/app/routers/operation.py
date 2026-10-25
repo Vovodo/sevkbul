@@ -9,17 +9,20 @@ from app.schemas import (
     ShipmentFindResultSchema, ShipmentProgressSchema,
     ScanRequest, ScanResponseSchema, ScanLogSchema,
     ShipmentTargetImportResultSchema, RowErrorSchema, ScannedLabelSchema,
-    ShipmentManifestSchema, ShipmentGroupSchema,
+    ShipmentManifestSchema, ShipmentGroupSchema, CandidateListSchema,
 )
-from app.services.target_service import list_targets, add_target, clear_targets, find_shipments
-from app.services.shipment_excel_import import import_shipment_targets_excel
+from app.services.target_service import list_targets, add_target, clear_targets, delete_target, find_shipments
+from app.services.shipment_excel_import import UNSUITABLE_SHIPMENT, import_shipment_targets_excel
 from app.services.shipment_service import (
     get_active_shipments, get_shipment_progress, rename_shipment,
     get_shipment_groups, rename_shipment_group,
 )
+from app.services.recalculate_job import get_recalculate_status, start_recalculate
 from app.services.scan_service import process_global_scan
 from app.services.operation_service import (
-    reset_active_shipments, get_scanned_labels, undo_scan, get_shipment_manifest
+    reset_active_shipments, delete_shipment_group, get_scanned_labels, undo_scan, get_shipment_manifest,
+    list_candidate_labels,
+
 )
 from app.models import ScanLog, InventoryLabel
 from app.ws_manager import ws_manager
@@ -95,6 +98,16 @@ def delete_targets(db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@router.delete("/targets/{target_id}")
+def delete_one_target(target_id: int, db: Session = Depends(get_db)):
+    try:
+        delete_target(db, target_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    _broadcast_full_status(db, "target_delete")
+    return {"ok": True}
+
+
 @router.post("/targets/import", response_model=ShipmentTargetImportResultSchema)
 async def import_targets_excel(
     file: UploadFile = File(...),
@@ -108,7 +121,9 @@ async def import_targets_excel(
     except Exception:
         raise HTTPException(status_code=400, detail="Excel okunamadı")
 
-    result = import_shipment_targets_excel(db, content, replace=replace)
+    result = import_shipment_targets_excel(db, content, replace=replace, filename=file.filename)
+    if any(err.reason == UNSUITABLE_SHIPMENT for err in result.errors):
+        raise HTTPException(status_code=400, detail=UNSUITABLE_SHIPMENT)
     if result.missing_columns:
         raise HTTPException(status_code=400, detail=f"Eksik kolonlar: {', '.join(result.missing_columns)}")
 
@@ -139,6 +154,30 @@ def find_shipment_pools(hourly_fifo: bool = False, db: Session = Depends(get_db)
     response = ShipmentFindResultSchema(shipments=shipments, errors=result["errors"])
     _broadcast_full_status(db, "find")
     return response
+
+
+@router.post("/recalculate")
+def recalculate_shipment_pools():
+    """Hesaplamayı arka planda başlatır. İstek bitmeden arayüz kilitlenmez."""
+    return {"status": start_recalculate()}
+
+
+@router.get("/recalculate/status")
+def recalculate_shipment_status():
+    return get_recalculate_status()
+
+
+@router.delete("/group/{group_id}")
+def remove_shipment_group(group_id: int, db: Session = Depends(get_db)):
+    """Mevcut sevkiyat gruplarından birini kaldırır. Diğerleri ve hedefler durur."""
+    try:
+        removed = delete_shipment_group(db, group_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    if get_current_active_group_id(db) is None:
+        set_current_active_group_id(None)
+    _broadcast_full_status(db, "group_delete", {"removed_group_id": group_id, "removed": removed})
+    return {"removed_group_id": group_id, "removed": removed}
 
 
 @router.post("/reset")
@@ -197,6 +236,15 @@ def recent_scans(limit: int = 30, db: Session = Depends(get_db)):
             quantity=qty, result=log.result.value, scanned_at=log.scanned_at,
         ))
     return result
+
+
+@router.get("/{shipment_id}/candidates", response_model=CandidateListSchema)
+def shipment_candidate_labels(shipment_id: int, fifo_group: str, db: Session = Depends(get_db)):
+    """Seçilen FIFO tarihinde okutulabilecek etiketleri döner."""
+    try:
+        return list_candidate_labels(db, shipment_id, fifo_group)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @router.get("/{shipment_id}/scanned", response_model=list[ScannedLabelSchema])

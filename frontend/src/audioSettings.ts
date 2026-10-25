@@ -21,19 +21,19 @@ export interface AudioSettings {
 }
 
 export const SUCCESS_SOUND_OPTIONS: { id: SuccessSoundId; label: string; desc: string }[] = [
-  { id: 'cyber_chime', label: 'Siber Melodi ⭐', desc: 'Gelecek nesil kristal sentezör arpeji — favori onay sesi' },
-  { id: 'industrial_laser', label: 'Endüstriyel Lazer 🚀', desc: '40m mesafeden duyulan çift yüksek lazer + tiz onay çınlaması' },
-  { id: 'hyper_beep', label: 'Hiper Okuyucu Bip ⚡', desc: 'El terminali tarzı Ultra-Yüksek frekanslı çift bip (2.4kHz - 3.2kHz)' },
-  { id: 'sonic_chime', label: 'Sonik Akort 🎵', desc: 'Parlak ve yüksek enerjili 3 notalı kristal onay akordu' },
-  { id: 'stadium_horn', label: 'Depo Onay Kornosu 🎺', desc: 'Gürültülü depo ortamında makine sesini yırtan 3 notalı güçlü kornolar' },
+  { id: 'cyber_chime', label: 'Siber melodi', desc: 'Kristal sentezör arpeji' },
+  { id: 'industrial_laser', label: 'Endüstriyel lazer', desc: 'Uzaktan duyulan çift lazer ve onay çınlaması' },
+  { id: 'hyper_beep', label: 'Hiper okuyucu bip', desc: 'El terminali tarzı yüksek frekanslı çift bip' },
+  { id: 'sonic_chime', label: 'Sonik akort', desc: 'Üç notalı parlak onay akordu' },
+  { id: 'stadium_horn', label: 'Depo onay kornası', desc: 'Gürültülü ortamda ayırt edilen üç notalı korna' },
 ];
 
 export const FAILURE_SOUND_OPTIONS: { id: FailureSoundId; label: string; desc: string }[] = [
-  { id: 'warehouse_alarm', label: 'Depo İkaz Sireni 🚨', desc: '30-40 metre uzaklıktan net duyulan ritmik çift testere ikaz sireni (Önerilen)' },
-  { id: 'hyper_error', label: 'Hiper Red İkazı 💥', desc: 'Keskin kare dalga 3\'lü sert vuruş — anında fark edilir red' },
-  { id: 'metal_strike', label: 'Metalik İptal 🔨', desc: 'Tiz ve sert metalik darbe + hızlı alçalan frekans ikazı' },
-  { id: 'emergency_buzz', label: 'Acil İkaz Hörnü 🔊', desc: 'Depo zemininde yankılanan çift buzzy ikaz kornosu' },
-  { id: 'sub_impact_alarm', label: 'Ağır İkaz Darbesi 💣', desc: 'Derin vurmalı bas + keskin alçalan dual siren' },
+  { id: 'warehouse_alarm', label: 'Depo ikaz sireni', desc: 'Uzaktan duyulan ritmik çift ikaz' },
+  { id: 'hyper_error', label: 'Hiper red ikazı', desc: 'Üçlü sert vuruş' },
+  { id: 'metal_strike', label: 'Metalik iptal', desc: 'Sert metalik darbe ve alçalan ikaz' },
+  { id: 'emergency_buzz', label: 'Acil ikaz kornası', desc: 'Depo zemininde yankılanan çift ikaz' },
+  { id: 'sub_impact_alarm', label: 'Ağır ikaz darbesi', desc: 'Derin vuruş ve alçalan siren' },
 ];
 
 const STORAGE_KEY = 'sevkiyatbul_audio_settings';

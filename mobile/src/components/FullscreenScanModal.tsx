@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { X, CheckCircle, AlertTriangle, Ban, AlertCircle, XCircle } from 'lucide-react';
+import { X, CheckCircle, AlertTriangle, Ban, AlertCircle, XCircle, Radio } from 'lucide-react';
 import { ScanResponse } from '../api';
 import { ScreenOrientation } from '@capacitor/screen-orientation';
 import { Capacitor } from '@capacitor/core';
@@ -143,7 +143,7 @@ export default function FullscreenScanModal({
               <div className="fs-pulse-ring ring-3" />
               <div className="fs-waiting-core">
                 <span className="fs-waiting-beam" />
-                <span className="fs-waiting-icon">📡</span>
+                    <Radio size={28} />
               </div>
             </div>
             <div className="mobile-fs-card-title">Okutma Bekleniyor...</div>

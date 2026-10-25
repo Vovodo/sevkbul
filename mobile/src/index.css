@@ -1456,12 +1456,25 @@ html, body {
 .target-chip {
   background: var(--surface2);
   border: 1px solid var(--border);
-  padding: 0.25rem 0.5rem;
+  padding: 0.25rem 0.35rem 0.25rem 0.5rem;
   border-radius: 6px;
   font-size: 0.75rem;
   display: flex;
   align-items: center;
   gap: 0.4rem;
+}
+
+.target-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(239, 68, 68, 0.15);
+  color: #fca5a5;
+  cursor: pointer;
 }
 
 .target-ref {

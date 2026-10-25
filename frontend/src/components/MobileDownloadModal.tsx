@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Check, Copy, Download, ListOrdered, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import Logo from './Logo';
 
@@ -47,7 +48,7 @@ export default function MobileDownloadModal({ isOpen, onClose }: MobileDownloadM
             </div>
           </div>
           <button type="button" className="op-btn danger compact" onClick={onClose}>
-            ✕ Kapat
+            <X size={15} /> Kapat
           </button>
 
         </div>
@@ -77,17 +78,17 @@ export default function MobileDownloadModal({ isOpen, onClose }: MobileDownloadM
               target="_blank"
               rel="noreferrer"
             >
-              <span>⬇️ Android APK İndir</span>
+              <Download size={16} /> Android APK indir
             </a>
 
             <button type="button" className="op-btn secondary" onClick={handleCopy}>
-              <span>{copied ? '✓ Link Kopyalandı!' : '📋 İndirme Linkini Kopyala'}</span>
+              {copied ? <><Check size={15} /> Link kopyalandı</> : <><Copy size={15} /> İndirme linkini kopyala</>}
             </button>
           </div>
 
           {/* URL göster */}
           <div className="download-guide-box">
-            <h4>📌 Kurulum Adımları:</h4>
+            <h4><ListOrdered size={16} /> Kurulum adımları</h4>
             <ol className="guide-steps">
               <li>
                 <strong>QR Kodu Okutun:</strong> Telefonunuzun kamerasıyla yukarıdaki QR kodu tarayın.

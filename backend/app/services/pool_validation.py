@@ -4,8 +4,13 @@ from enum import Enum
 
 from sqlalchemy.orm import Session, joinedload
 
+from decimal import Decimal
+
 from app.models import (
     InventoryLabel, Shipment, ShipmentLabel, ShipmentStatus, ShipmentLabelStatus,
+)
+from app.services.fifo_quota import (
+    group_key, quota_map, scanned_on_date, shipment_scanned_total,
 )
 
 
@@ -69,31 +74,93 @@ def find_inventory_label(db: Session, label: str) -> InventoryLabel | None:
     return None
 
 
+def _already_scanned(db: Session, inventory_id: int) -> ShipmentLabel | None:
+    return (
+        db.query(ShipmentLabel)
+        .options(joinedload(ShipmentLabel.shipment))
+        .filter(
+            ShipmentLabel.inventory_label_id == inventory_id,
+            ShipmentLabel.status == ShipmentLabelStatus.SCANNED,
+        )
+        .first()
+    )
+
+
+def _own_row(db: Session, shipment_id: int, inventory_id: int) -> ShipmentLabel | None:
+    return (
+        db.query(ShipmentLabel)
+        .filter(
+            ShipmentLabel.shipment_id == shipment_id,
+            ShipmentLabel.inventory_label_id == inventory_id,
+        )
+        .first()
+    )
+
+
+def _date_decision(db: Session, inv: InventoryLabel, shipment: Shipment) -> PoolCheck:
+    """Seçilen sevkiyatta bu etiketin FIFO tarihi açık mı."""
+    if (
+        shipment.status == ShipmentStatus.COMPLETED
+        or shipment_scanned_total(db, shipment) >= Decimal(shipment.requested_quantity)
+    ):
+        return PoolCheck(
+            result=PoolCheckResult.QUANTITY_EXCEEDED,
+            inventory=inv,
+            shipment=shipment,
+        )
+
+    key = group_key(inv.fifo_date, bool(shipment.hourly_fifo))
+    quotas = quota_map(db, shipment)
+    quota = quotas.get(key)
+    if quota is None:
+        return PoolCheck(
+            result=PoolCheckResult.OUTSIDE_POOL,
+            inventory=inv,
+            shipment=shipment,
+        )
+
+    scanned = scanned_on_date(db, shipment, key)
+    if scanned >= quota - Decimal("0.001"):
+        return PoolCheck(
+            result=PoolCheckResult.QUANTITY_EXCEEDED,
+            inventory=inv,
+            shipment=shipment,
+        )
+
+    return PoolCheck(
+        result=PoolCheckResult.IN_POOL,
+        inventory=inv,
+        shipment=shipment,
+        shipment_label=_own_row(db, shipment.id, inv.id),
+    )
+
+
 def check_label_in_shipment_pool(
     db: Session,
     label: str,
     target_shipment_id: int | None = None,
     target_group_id: int | None = None,
 ) -> PoolCheck:
-    """
-    Okutma doğrulaması — ÇOK SEVKIYAT VE SEÇİLİ SEVKİYAT GRUBU ÖNCELİK DESTEKLİ:
+    """Okutma, barkoda değil FIFO tarihinin kalan kotasına bakar.
 
-    1. Etiket veritabanında var mı? (Baştaki s/S ön ekleri esnek şekilde temizlenir)
-    2. Eğer target_group_id veya target_shipment_id verildiyse:
-       - Etiket doğrudan SEÇİLEN sevkiyat grubunun (içindeki herhangi bir referansın) havuzunda mı kontrol edilir.
-       - Seçili sevkiyata ait değilse doğrudan OUTSIDE_POOL (SEVKİYAT DIŞI) döner.
-    3. Hedef belirtilmediyse:
-       - Tüm aktif/tamamlanmış sevkiyatlar içinde etiket aranır.
+    Seçili sevkiyatta o tarih varsa ve kotası dolmadıysa etiket kabul edilir.
+    Etiket başka sevkiyatın tahmini listesinde olsa bile kilitli sayılmaz.
     """
     inv = find_inventory_label(db, label)
     if not inv:
         return PoolCheck(result=PoolCheckResult.NOT_IN_STOCK)
 
-    # ── 1. Kullanıcı belirli bir sevkiyat grubu seçtiyse ───────────────────
+    already = _already_scanned(db, inv.id)
+    if already:
+        return PoolCheck(
+            result=PoolCheckResult.ALREADY_SCANNED,
+            inventory=inv,
+            shipment=already.shipment,
+            shipment_label=already,
+        )
+
     if target_group_id is not None or target_shipment_id is not None:
         gid = target_group_id if target_group_id is not None else target_shipment_id
-
-        # Bu gruptaki tüm aktif shipment'lar
         group_shipments = (
             db.query(Shipment)
             .filter(
@@ -105,174 +172,54 @@ def check_label_in_shipment_pool(
         if not group_shipments:
             return PoolCheck(result=PoolCheckResult.NO_ACTIVE_SHIPMENT)
 
-        # Bu etiketin bu grupta bir allocation'ı var mı?
-        allocation = (
-            db.query(ShipmentLabel)
-            .options(
-                joinedload(ShipmentLabel.shipment)
-                .joinedload(Shipment.shipment_labels)
-                .joinedload(ShipmentLabel.inventory_label),
-                joinedload(ShipmentLabel.inventory_label),
-            )
-            .join(Shipment, ShipmentLabel.shipment_id == Shipment.id)
-            .filter(
-                ShipmentLabel.inventory_label_id == inv.id,
-                (Shipment.group_id == gid) | (Shipment.id == gid),
-                Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
-            )
-            .first()
-        )
-
-        if not allocation:
-            # Seçili sevkiyat grubuna ait değil (başka bir sevkiyata ait veya havuz dışı)
-            target_shipment = group_shipments[0]
+        matches = [s for s in group_shipments if s.reference == inv.reference]
+        if not matches:
             return PoolCheck(
                 result=PoolCheckResult.OUTSIDE_POOL,
                 inventory=inv,
-                shipment=target_shipment,
+                shipment=group_shipments[0],
             )
+        return _date_decision(db, inv, matches[0])
 
-        if allocation.status == ShipmentLabelStatus.SCANNED:
-            return PoolCheck(
-                result=PoolCheckResult.ALREADY_SCANNED,
-                inventory=inv,
-                shipment=allocation.shipment,
-                shipment_label=allocation,
-            )
-
-        target_shipment = allocation.shipment
-
-    # ── 2. Seçili sevkiyat belirtilmediyse (Genel Arama) ───────────────────
-    else:
-        allocation = (
-            db.query(ShipmentLabel)
-            .options(
-                joinedload(ShipmentLabel.shipment)
-                .joinedload(Shipment.shipment_labels)
-                .joinedload(ShipmentLabel.inventory_label)
-            )
-            .join(Shipment, ShipmentLabel.shipment_id == Shipment.id)
-            .filter(
-                ShipmentLabel.inventory_label_id == inv.id,
-                Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
-            )
-            .order_by(Shipment.created_at.desc())
-            .first()
+    candidates = (
+        db.query(Shipment)
+        .filter(
+            Shipment.reference == inv.reference,
+            Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
         )
+        .order_by(Shipment.created_at.asc(), Shipment.id.asc())
+        .all()
+    )
+    if not candidates:
+        return PoolCheck(result=PoolCheckResult.OUTSIDE_POOL, inventory=inv)
 
-        if allocation and allocation.status == ShipmentLabelStatus.SCANNED:
-            return PoolCheck(
-                result=PoolCheckResult.ALREADY_SCANNED,
-                inventory=inv,
-                shipment=allocation.shipment,
-                shipment_label=allocation,
-            )
-
-        if allocation:
-            target_shipment = allocation.shipment
-        else:
-            target_shipment = (
-                db.query(Shipment)
-                .options(
-                    joinedload(Shipment.shipment_labels)
-                    .joinedload(ShipmentLabel.inventory_label)
-                )
-                .filter(
-                    Shipment.reference == inv.reference,
-                    Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
-                )
-                .order_by(Shipment.created_at.desc())
-                .first()
-            )
-
-    # ── Sevkiyat tamamlanmış veya miktar aşılmışsa ─────────────────────
-    if target_shipment:
-        total_scanned = sum(
-            float(sl.scanned_quantity) for sl in target_shipment.shipment_labels
-            if sl.status in (ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL)
-        )
+    full_match: Shipment | None = None
+    for shipment in candidates:
+        key = group_key(inv.fifo_date, bool(shipment.hourly_fifo))
+        if key not in quota_map(db, shipment):
+            continue
         if (
-            target_shipment.status == ShipmentStatus.COMPLETED
-            or total_scanned >= float(target_shipment.requested_quantity)
+            shipment.status == ShipmentStatus.COMPLETED
+            or shipment_scanned_total(db, shipment) >= Decimal(shipment.requested_quantity)
         ):
-            return PoolCheck(
-                result=PoolCheckResult.QUANTITY_EXCEEDED,
-                inventory=inv,
-                shipment=target_shipment,
-                shipment_label=allocation,
-            )
+            full_match = shipment
+            continue
+        if scanned_on_date(db, shipment, key) >= quota_map(db, shipment)[key] - Decimal("0.001"):
+            full_match = shipment
+            continue
+        return _date_decision(db, inv, shipment)
 
-    # ── Etiket bir ShipmentLabel'da varsa FIFO grup kontenjan kontrolü ──
-    if allocation:
-        shipment = allocation.shipment
-
-        use_hourly = getattr(shipment, "hourly_fifo", False)
-
-        def get_g_key(dt):
-            return dt.replace(second=0, microsecond=0) if use_hourly else dt.date()
-
-        # Sevkiyatın tüm ShipmentLabel'larını FIFO tarihine göre grupla
-        group_items_by_date: dict = {}
-        for sl in shipment.shipment_labels:
-            if not sl.inventory_label:
-                continue
-            g_key = get_g_key(sl.inventory_label.fifo_date)
-            if g_key not in group_items_by_date:
-                group_items_by_date[g_key] = []
-            group_items_by_date[g_key].append(sl)
-
-        sorted_g_keys = sorted(group_items_by_date.keys())
-        quota_map: dict = {}
-        cum_allocated = 0.0
-        target = float(shipment.requested_quantity)
-
-        for g_key in sorted_g_keys:
-            sl_list = group_items_by_date[g_key]
-            group_stock = sum(float(sl.allocated_quantity) for sl in sl_list)
-            needed = max(0.0, target - cum_allocated)
-            g_quota = min(needed, group_stock)
-            quota_map[g_key] = g_quota
-            cum_allocated += g_quota
-
-        inv_g_key = get_g_key(inv.fifo_date)
-        scanned_in_group = sum(
-            float(sl.allocated_quantity)
-            for sl in shipment.shipment_labels
-            if (
-                sl.inventory_label
-                and get_g_key(sl.inventory_label.fifo_date) == inv_g_key
-                and sl.status == ShipmentLabelStatus.SCANNED
-            )
-        )
-
-        inv_qty = float(inv.quantity)
-        allowed_quota = quota_map.get(inv_g_key, 0.0)
-
-        if scanned_in_group + inv_qty > allowed_quota:
-            # Grubun kontenjanı doldu — bu etiket havuz dışında
-            return PoolCheck(
-                result=PoolCheckResult.OUTSIDE_POOL,
-                inventory=inv,
-                shipment=shipment,
-            )
-
+    if full_match:
         return PoolCheck(
-            result=PoolCheckResult.IN_POOL,
+            result=PoolCheckResult.QUANTITY_EXCEEDED,
             inventory=inv,
-            shipment=shipment,
-            shipment_label=allocation,
+            shipment=full_match,
         )
-
-    # ── Etiket hiçbir sevkiyat havuzuna dahil değil ─────────────────────
-    # (Bu referanstan bir sevkiyat var ama etiket onun dışında)
-    if target_shipment:
-        return PoolCheck(
-            result=PoolCheckResult.OUTSIDE_POOL,
-            inventory=inv,
-            shipment=target_shipment,
-        )
-
-    return PoolCheck(result=PoolCheckResult.OUTSIDE_POOL, inventory=inv)
+    return PoolCheck(
+        result=PoolCheckResult.OUTSIDE_POOL,
+        inventory=inv,
+        shipment=candidates[-1],
+    )
 
 
 def log_allocation_created(

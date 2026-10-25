@@ -82,24 +82,25 @@ class TestUserScenarios:
         assert find_resp.status_code == 200
         shipment_id = find_resp.json()["shipments"][0]["shipment_id"]
 
-        # Verify Pool: ETIKET-A (23.04), ETIKET-B (29.06) and ETIKET-C (29.06) candidate pool. ETIKET-D (08.07) NOT in pool.
+        # 30 istek: A (23.04, 15) + B (29.06 09:30, 15). C aynı günün devamı, kilitlenmez.
         pool_labels = c.get(f"/api/shipments/{shipment_id}/labels").json()
         pool_label_names = {l["label"] for l in pool_labels}
-        assert pool_label_names == {"ETIKET-A", "ETIKET-B", "ETIKET-C"}
+        assert pool_label_names == {"ETIKET-A", "ETIKET-B"}
+        assert "ETIKET-C" not in pool_label_names
         assert "ETIKET-D" not in pool_label_names
 
-        # TEST 2: Scan ETIKET-C first (29.06 group, 15 units quota available) -> ACCEPTED
-        scan_c = c.post("/api/shipment/scan", json={"label": "ETIKET-C"})
-        assert scan_c.status_code == 200
-        assert scan_c.json()["result"] == "SEVKİYAT ÜRÜNÜ"
-        assert scan_c.json()["scanned_quantity"] == 15.0
-        assert scan_c.json()["progress_percent"] == 50.0
-
-        # TEST 3: Scan ETIKET-B second (29.06 group quota 15 is ALREADY FULL) -> REJECTED
+        # TEST 2: Scan ETIKET-B (29.06 payı) -> ACCEPTED
         scan_b = c.post("/api/shipment/scan", json={"label": "ETIKET-B"})
         assert scan_b.status_code == 200
-        assert scan_b.json()["result"] == "SEVKİYAT DIŞI"
+        assert scan_b.json()["result"] == "SEVKİYAT ÜRÜNÜ"
         assert scan_b.json()["scanned_quantity"] == 15.0
+        assert scan_b.json()["progress_percent"] == 50.0
+
+        # TEST 3: ETIKET-C aynı gün. Kota B ile doldu, kilit değil, miktar aşıldı.
+        scan_c = c.post("/api/shipment/scan", json={"label": "ETIKET-C"})
+        assert scan_c.status_code == 200
+        assert scan_c.json()["result"] == "MİKTAR AŞILDI"
+        assert scan_c.json()["scanned_quantity"] == 15.0
 
         # TEST 4: Scan ETIKET-A third (23.04 group) -> ACCEPTED, 30/30 COMPLETED
         scan_a = c.post("/api/shipment/scan", json={"label": "ETIKET-A"})
@@ -139,7 +140,7 @@ class TestUserScenarios:
         assert status_after_reload.json()[0]["is_complete"] is True
 
         rescan_b_after_reload = c.post("/api/shipment/scan", json={"label": "ETIKET-B"})
-        assert rescan_b_after_reload.json()["result"] == "MİKTAR AŞILDI"
+        assert rescan_b_after_reload.json()["result"] == "ZATEN OKUTULDU"
 
         rescan_a_after_reload = c.post("/api/shipment/scan", json={"label": "ETIKET-A"})
         assert rescan_a_after_reload.json()["result"] == "ZATEN OKUTULDU"
@@ -164,7 +165,7 @@ class TestUserScenarios:
         assert scan_a.json()["reference"] == "6681350-HZE-1"
 
     def test_critical_b_then_c_rejected(self, client):
-        """TEST 3: B then C — C must RED, progress stays 15/30."""
+        """Aynı günün ikinci etiketi kotayı aşar, ilerleme 15/30 kalır."""
         c, _ = client
         c.post("/api/inventory/import/stock", files={
             "file": ("stock.xlsx", create_user_scenario_stock(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -177,7 +178,7 @@ class TestUserScenarios:
         assert r_b.json()["scanned_quantity"] == 15.0
 
         r_c = c.post("/api/shipment/scan", json={"label": "ETIKET-C"})
-        assert r_c.json()["result"] == "SEVKİYAT DIŞI"
+        assert r_c.json()["result"] == "MİKTAR AŞILDI"
         assert r_c.json()["scanned_quantity"] == 15.0
         assert r_c.json()["progress_percent"] == 50.0
 

@@ -183,6 +183,9 @@ export const api = {
       body: JSON.stringify({ reference, target_quantity }),
     }),
 
+  deleteTarget: (id: number) =>
+    request<{ ok: boolean }>(`/api/shipment/targets/${id}`, { method: 'DELETE' }),
+
   importTargetsExcel: async (file: File) => {
     const form = new FormData();
     form.append('file', file);

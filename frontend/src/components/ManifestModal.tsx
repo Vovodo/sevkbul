@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
+import { Globe, Printer, TriangleAlert, X } from 'lucide-react';
 import { api, ShipmentManifest } from '../api';
 import { useLiveUpdates } from '../useLiveUpdates';
 import Logo from './Logo';
@@ -137,16 +138,16 @@ export default function ManifestModal({ isOpen, onClose }: ManifestModalProps) {
                 <span className="manifest-badge ok">
                   Toplam: {totalScanned} / {totalRequested} Adet ({completedRefs}/{displayManifests.length} Tamamlandı)
                 </span>
-                <span className="manifest-badge pool">{totalLabels} Aday Etiket</span>
+                <span className="manifest-badge pool">{totalLabels} FIFO Tarihi</span>
               </div>
             </div>
           </div>
           <div className="manifest-actions">
             <button type="button" className="op-btn primary compact" onClick={handlePrint} style={{ fontWeight: 700 }}>
-              🖨️ Yazdır / PDF İndir
+              <Printer size={15} /> Yazdır / PDF
             </button>
             <button type="button" className="op-btn danger compact" onClick={onClose}>
-              ✕ Kapat
+              <X size={15} /> Kapat
             </button>
           </div>
         </div>
@@ -224,7 +225,7 @@ export default function ManifestModal({ isOpen, onClose }: ManifestModalProps) {
                   whiteSpace: 'nowrap',
                 }}
               >
-                🌐 Tümü ({manifests.length} Ref)
+                <Globe size={14} /> Tümü ({manifests.length})
               </button>
             )}
           </div>
@@ -242,8 +243,8 @@ export default function ManifestModal({ isOpen, onClose }: ManifestModalProps) {
               <span className="manifest-doc-stat">Toplam İlerleme: <strong>{totalScanned} / {totalRequested} Adet</strong></span>
               <span className="manifest-doc-stat">Tamamlanan Referans: <strong>{completedRefs} / {displayManifests.length}</strong></span>
               <span className="manifest-legend">
-                <span className="legend-item"><span className="compact-dot filled">●</span> Bulunan (Okutuldu)</span>
-                <span className="legend-item"><span className="compact-dot empty">○</span> Bulunamayan (Bekliyor)</span>
+                <span className="legend-item"><span className="compact-dot filled">●</span> Tarih doldu</span>
+                <span className="legend-item"><span className="compact-dot empty">○</span> Tarih açık</span>
               </span>
             </div>
           </div>
@@ -273,7 +274,7 @@ export default function ManifestModal({ isOpen, onClose }: ManifestModalProps) {
                           İlerleme: <strong>{m.scanned_quantity} / {m.requested_quantity}</strong>
                         </span>
                         <span className={`ref-status-pill ${isComplete ? 'done' : 'ongoing'}`}>
-                          {isComplete ? 'TAMAMLANDI ✓' : 'DEVAM EDİYOR'}
+                          {isComplete ? 'Tamamlandı' : 'Devam ediyor'}
                         </span>
                       </div>
                     </div>
@@ -283,36 +284,60 @@ export default function ManifestModal({ isOpen, onClose }: ManifestModalProps) {
                       <thead>
                         <tr>
                           <th style={{ width: '28px', textAlign: 'center' }}>DURUM</th>
-                          <th style={{ width: '130px' }}>ETİKET NO</th>
+                          <th style={{ width: '160px' }}>FİFO TARİHİ</th>
                           <th style={{ width: '150px' }}>REFERANS</th>
-                          <th style={{ width: '65px', textAlign: 'right' }}>MİKTAR</th>
-                          <th style={{ width: '140px' }}>FİFO TARİH & SAAT</th>
-                          <th style={{ width: '140px' }}>FİFO GRUBU</th>
-                          <th style={{ width: '85px', textAlign: 'center' }}>DURUM</th>
+                          <th style={{ width: '80px', textAlign: 'right' }}>BEKLENEN</th>
+                          <th style={{ width: '80px', textAlign: 'right' }}>OKUTULAN</th>
+                          <th>OKUTULAN ETİKET</th>
+                          <th style={{ width: '100px', textAlign: 'center' }}>DURUM</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {m.items.map((item, itemIdx) => (
-                          <tr key={itemIdx} className={item.is_scanned ? 'scanned-item-row' : 'pending-item-row'}>
+                        {m.items.map((item, itemIdx) => {
+                          const scanned = item.scanned_quantity ?? 0;
+                          const filled = item.is_scanned || scanned >= item.quantity;
+                          const stateLabel = filled ? 'DOLDU' : scanned > 0 ? 'DEVAM' : 'AÇIK';
+                          return (
+                          <tr key={itemIdx} className={`${filled ? 'scanned-item-row' : 'pending-item-row'}${item.outside_fifo ? ' outside-fifo-row' : ''}`}>
                             <td className="dot-cell" style={{ textAlign: 'center' }}>
-                              {item.is_scanned ? (
-                                <span className="compact-dot filled" title="Okutuldu / Bulundu">●</span>
+                              {item.outside_fifo ? (
+                                <TriangleAlert size={14} aria-label="FIFO dışı" />
+                              ) : filled ? (
+                                <span className="compact-dot filled" title="Tarih doldu">●</span>
                               ) : (
-                                <span className="compact-dot empty" title="Bekliyor / Bulunamadı">○</span>
+                                <span className="compact-dot empty" title="Tarih açık">○</span>
                               )}
                             </td>
-                            <td className="font-mono label-text">{item.label}</td>
+                            <td className="font-mono label-text">{item.fifo_group_date}</td>
                             <td className="ref-cell">{item.reference}</td>
                             <td className="qty-cell" style={{ textAlign: 'right' }}>{item.quantity}</td>
-                            <td className="font-mono date-cell">{item.fifo_date}</td>
-                            <td className="font-mono date-cell text-muted">{item.fifo_group_date}</td>
+                            <td className="qty-cell" style={{ textAlign: 'right' }}>{item.scanned_quantity ?? 0}</td>
+                            <td className="manifest-scan-cell">
+                              {(item.scanned_labels ?? []).length === 0 ? (
+                                <span className="manifest-scan-empty">—</span>
+                              ) : (
+                                <span className="manifest-scan-list">
+                                  {(item.scanned_labels || []).map(read => (
+                                    <span key={read.label} className={`manifest-scan-label${read.outside_fifo ? ' is-outside' : ''}`}>
+                                      <span>{read.label}</span>
+                                      <em>{read.quantity}</em>
+                                    </span>
+                                  ))}
+                                </span>
+                              )}
+                            </td>
                             <td style={{ textAlign: 'center' }}>
-                              <span className={`badge-pill ${item.is_scanned ? 'badge-scanned' : 'badge-pending'}`}>
-                                {item.is_scanned ? 'OKUTULDU' : 'BEKLİYOR'}
-                              </span>
+                              {item.outside_fifo ? (
+                                <span className="badge-pill badge-outside" title="Yeniden hesaplamada bu tarihin yerini daha eski bir FIFO aldı">FIFO dışı</span>
+                              ) : (
+                                <span className={`badge-pill ${filled ? 'badge-scanned' : 'badge-pending'}`}>
+                                  {stateLabel}
+                                </span>
+                              )}
                             </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>

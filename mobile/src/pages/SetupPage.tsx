@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Upload, Plus, Clock, Calendar, CheckCircle, AlertCircle, Play } from 'lucide-react';
+import { Upload, Plus, Clock, Calendar, CheckCircle, AlertCircle, Play, ClipboardList, BarChart3, X } from 'lucide-react';
 import { api, ShipmentTarget } from '../api';
 import { triggerTapHaptic } from '../audio/audioEngine';
 
@@ -79,6 +79,20 @@ export default function SetupPage({
     }
   };
 
+  const handleRemoveTarget = async (id: number) => {
+    void triggerTapHaptic();
+    setLoadingAction(`remove-${id}`);
+    setErrorMsg('');
+    try {
+      await api.deleteTarget(id);
+      onRefreshTargets();
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Hedef silinemedi');
+    } finally {
+      setLoadingAction('');
+    }
+  };
+
   const handleFindShipments = async () => {
     void triggerTapHaptic();
     setLoadingAction('find');
@@ -130,7 +144,7 @@ export default function SetupPage({
         {/* Stock Excel Card */}
         <div className="setup-card">
           <div className="card-header-compact">
-            <span className="card-icon">📊</span>
+            <span className="card-icon"><BarChart3 size={18} /></span>
             <div>
               <h4>STOK EXCELİ</h4>
               <span className="card-sub">ETİKET, REFERANS, MİKTAR, X98FIFO</span>
@@ -165,7 +179,7 @@ export default function SetupPage({
         {/* Shipment Targets Excel Card */}
         <div className="setup-card">
           <div className="card-header-compact">
-            <span className="card-icon">📋</span>
+            <span className="card-icon"><ClipboardList size={18} /></span>
             <div>
               <h4>SEVKİYAT HEDEF EXCELİ</h4>
               <span className="card-sub">Toplu referans ve adet listesi</span>
@@ -241,6 +255,15 @@ export default function SetupPage({
               <div key={t.id} className="target-chip">
                 <span className="target-ref font-mono">{t.reference}</span>
                 <span className="target-qty">{t.target_quantity} Adet</span>
+                <button
+                  type="button"
+                  className="target-chip-remove"
+                  onClick={() => void handleRemoveTarget(t.id)}
+                  disabled={loadingAction === `remove-${t.id}`}
+                  aria-label={`${t.reference} hedefini sil`}
+                >
+                  <X size={12} />
+                </button>
               </div>
             ))}
           </div>
@@ -257,8 +280,8 @@ export default function SetupPage({
             <strong className="toggle-title">FİFO Saat Önceliği Filtresi</strong>
             <p className="toggle-desc">
               {hourlyFifo
-                ? '⚡ AÇIK: Aynı gün üretilenlerde saat:dakika sırasına göre dağıtır.'
-                : '📅 KAPALI: Gün bazında gruplar (Saat önemsiz).'}
+                ? 'Açık: aynı günün içinde saat ve dakika sırası kullanılır.'
+                : 'Kapalı: aynı gün tek grup sayılır.'}
             </p>
           </div>
         </div>

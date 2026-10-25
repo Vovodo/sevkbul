@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Volume2 } from 'lucide-react';
 import {
   AudioSettings,
   DEFAULT_AUDIO_SETTINGS,
@@ -40,7 +41,7 @@ export default function SoundSettings() {
   return (
     <div className="sound-settings">
       <button type="button" className="sound-toggle-btn" onClick={handleOpen} aria-expanded={open}>
-        🔊 SES AYARLARI
+        <Volume2 size={15} /> Ses ayarları
       </button>
 
       {open && (
@@ -86,7 +87,7 @@ export default function SoundSettings() {
 
           <div className="sound-group">
             <h3>Başarılı Ses</h3>
-            <p className="sound-hint">Yükselen melodi = sevkiyat ürünü ✓ — depoda uzaktan duyulur</p>
+            <p className="sound-hint">Yükselen melodi sevkiyat ürününü belirtir ve depoda uzaktan duyulur.</p>
             <div className="sound-options">
               {SUCCESS_SOUND_OPTIONS.map(opt => (
                 <div
@@ -120,7 +121,7 @@ export default function SoundSettings() {
 
           <div className="sound-group">
             <h3>Başarısız Ses</h3>
-            <p className="sound-hint">BONK-BONK + alçalan buzz = sevkiyat dışı ✕ — başarılı sesten tamamen farklı</p>
+            <p className="sound-hint">Alçalan ikaz sevkiyat dışını belirtir ve başarılı sesten ayrılır.</p>
             <div className="sound-options">
               {FAILURE_SOUND_OPTIONS.map(opt => (
                 <div

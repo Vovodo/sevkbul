@@ -9,9 +9,38 @@ import app.database as database
 import app.models  # Tablo tanımlarını yükle
 from app.routers import inventory, shipments, scan, operation
 from app.services.lookup_cache import lookup_cache
+from app.services.fifo_quota import backfill_missing_quotas
 from app.ws_manager import ws_manager
 
 import asyncio
+
+
+def _ensure_shipment_stock_note() -> None:
+    """Eski veritabanında stok uyarı sütunu yoksa ekler."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(database.engine)
+    if "shipments" not in inspector.get_table_names():
+        return
+    columns = {col["name"] for col in inspector.get_columns("shipments")}
+    if "stock_note" in columns:
+        return
+    with database.engine.begin() as conn:
+        conn.execute(text("ALTER TABLE shipments ADD COLUMN stock_note VARCHAR(300)"))
+
+
+def _ensure_target_source_name() -> None:
+    """Eski veritabanında sevkiyat adı sütunu yoksa ekler."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(database.engine)
+    if "shipment_targets" not in inspector.get_table_names():
+        return
+    columns = {col["name"] for col in inspector.get_columns("shipment_targets")}
+    if "source_name" in columns:
+        return
+    with database.engine.begin() as conn:
+        conn.execute(text("ALTER TABLE shipment_targets ADD COLUMN source_name VARCHAR(200)"))
 
 
 @asynccontextmanager
@@ -20,8 +49,11 @@ async def lifespan(app: FastAPI):
     ws_manager.set_event_loop(asyncio.get_running_loop())
     # Veritabanı tabloları yoksa otomatik oluştur
     database.Base.metadata.create_all(bind=database.engine)
+    _ensure_target_source_name()
+    _ensure_shipment_stock_note()
     db = database.SessionLocal()
     try:
+        backfill_missing_quotas(db)
         lookup_cache.load_all_active(db)
     finally:
         db.close()

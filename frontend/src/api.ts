@@ -65,6 +65,8 @@ export interface ShipmentProgress {
   progress_percent: number;
   status: string;
   is_complete: boolean;
+  stock_note?: string | null;
+  short_quantity?: number;
 }
 
 export interface ShipmentGroup {
@@ -104,6 +106,23 @@ export interface RecentScan {
   time: string;
 }
 
+export interface RecalculateStatus {
+  job?: number;
+  phase: 'idle' | 'running' | 'done' | 'error';
+  percent: number;
+  done: number;
+  total: number;
+  message: string;
+  error: string | null;
+  updated: number;
+}
+
+export interface CandidateLabel {
+  label: string;
+  quantity: number;
+  fifo_time: string;
+}
+
 export interface ScannedLabel {
   label: string;
   quantity: number;
@@ -115,10 +134,14 @@ export interface ShipmentManifestItem {
   label: string;
   reference: string;
   quantity: number;
+  scanned_quantity?: number;
   fifo_date: string;
   fifo_group_date: string;
   status: string;
   is_scanned: boolean;
+  outside_fifo?: boolean;
+  outside_reason?: 'window' | null;
+  scanned_labels?: { label: string; quantity: number; outside_fifo?: boolean }[];
 }
 
 export interface ShipmentManifest {
@@ -178,17 +201,34 @@ export const api = {
     return res.json() as Promise<{ targets: ShipmentTarget[]; successful: number }>;
   },
 
+  clearTargets: () =>
+    request<{ ok: boolean }>('/api/shipment/targets', { method: 'DELETE' }),
+
+  deleteTarget: (id: number) =>
+    request<{ ok: boolean }>(`/api/shipment/targets/${id}`, { method: 'DELETE' }),
+
   findShipments: (hourlyFifo: boolean = false) =>
     request<{ shipments: ShipmentProgress[]; errors: { reference: string; error: string }[] }>(
       `/api/shipment/find${hourlyFifo ? '?hourly_fifo=true' : ''}`,
       { method: 'POST' }
     ),
 
+  recalculate: () =>
+    request<{ status: string }>('/api/shipment/recalculate', { method: 'POST' }),
+
+  recalculateStatus: () =>
+    request<RecalculateStatus>('/api/shipment/recalculate/status'),
+
   getShipmentStatus: () => request<ShipmentProgress[]>('/api/shipment/status'),
 
   getGroups: () => request<ShipmentGroup[]>('/api/shipment/groups'),
 
   getManifest: () => request<ShipmentManifest[]>('/api/shipment/manifest'),
+
+  getCandidates: (shipmentId: number, fifoGroup: string) =>
+    request<{ remaining: number; labels: CandidateLabel[] }>(
+      `/api/shipment/${shipmentId}/candidates?fifo_group=${encodeURIComponent(fifoGroup)}`
+    ),
 
   scan: (label: string, shipment_id?: number | null, group_id?: number | null) =>
     request<ScanResponse>('/api/shipment/scan', {
@@ -203,6 +243,11 @@ export const api = {
 
   resetShipments: () =>
     request<{ cancelled: number }>('/api/shipment/reset', { method: 'POST' }),
+
+  deleteShipmentGroup: (groupId: number) =>
+    request<{ removed_group_id: number; removed: number }>(`/api/shipment/group/${groupId}`, {
+      method: 'DELETE',
+    }),
 
   getScannedLabels: (shipmentId: number) =>
     request<ScannedLabel[]>(`/api/shipment/${shipmentId}/scanned`),

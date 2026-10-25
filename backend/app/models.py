@@ -2,7 +2,8 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import (
-    Column, Integer, String, DateTime, ForeignKey, Numeric, Index, Boolean, Enum as SAEnum
+    Column, Integer, String, DateTime, ForeignKey, Numeric, Index, Boolean,
+    UniqueConstraint, Enum as SAEnum,
 )
 from sqlalchemy.orm import relationship
 
@@ -54,10 +55,12 @@ class Shipment(Base):
     status = Column(SAEnum(ShipmentStatus), default=ShipmentStatus.ACTIVE, index=True)
     hourly_fifo = Column(Boolean, default=False, nullable=False)
     name = Column(String(200), nullable=True)
+    stock_note = Column(String(300), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
 
     shipment_labels = relationship("ShipmentLabel", back_populates="shipment", cascade="all, delete-orphan")
+    date_quotas = relationship("ShipmentDateQuota", back_populates="shipment", cascade="all, delete-orphan")
     scan_logs = relationship("ScanLog", back_populates="shipment", cascade="all, delete-orphan")
 
 
@@ -98,6 +101,27 @@ class ScanLog(Base):
     )
 
 
+class ShipmentDateQuota(Base):
+    """Sevkiyatın bir FIFO tarihinde kabul edeceği miktar.
+
+    Barkod bu tarihe kilitlenmez. Kota dolana kadar aynı tarihteki
+    okutulmamış herhangi bir etiket bu sevkiyata yazılabilir.
+    """
+
+    __tablename__ = "shipment_date_quotas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    shipment_id = Column(Integer, ForeignKey("shipments.id"), nullable=False, index=True)
+    fifo_group = Column(DateTime, nullable=False)
+    quota_quantity = Column(Numeric(12, 2), nullable=False)
+
+    shipment = relationship("Shipment", back_populates="date_quotas")
+
+    __table_args__ = (
+        UniqueConstraint("shipment_id", "fifo_group", name="uq_shipment_fifo_group"),
+    )
+
+
 class ShipmentTarget(Base):
     """Sevkiyat hedefi — Excel veya manuel giriş, FIFO hesabından önce."""
     __tablename__ = "shipment_targets"
@@ -105,4 +129,5 @@ class ShipmentTarget(Base):
     id = Column(Integer, primary_key=True, index=True)
     reference = Column(String(200), nullable=False, index=True)
     target_quantity = Column(Numeric(12, 2), nullable=False)
+    source_name = Column(String(200), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

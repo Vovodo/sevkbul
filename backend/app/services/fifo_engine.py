@@ -49,13 +49,13 @@ def calculate_fifo_groups(
 ) -> FifoGroupResult:
     """
     FIFO Tarih Grubu & Kontenjan Mantığı:
-    1. Etiketler fifo_date sırasına göre takvim günlerine veya saatlerine (FIFO gruplarına) ayrılır.
+    1. Etiketler fifo_date sırasına göre takvim günlerine veya saatlerine ayrılır.
        - hourly_fifo=False: Gün bazlı gruplama (YYYY-MM-DD)
        - hourly_fifo=True: Saat/Dakika bazlı gruplama (YYYY-MM-DD HH:MM)
-    2. En eski gruptan başlanarak hedef miktara (requested_quantity) ulaşana kadar kontenjan tahsis edilir.
-    3. Tahsis edilen FIFO grubundaki TÜM etiketler aday olarak havuza (ShipmentLabel) eklenir.
-    4. Okutma sırasında o grubun tahsisli kontenjanı dolana kadar bu gruptaki HANGİ etiket okutulursa okutulsun KABUL edilir.
-    5. Kontenjan dolduğu anda aynı gruptaki diğer etiketler REJECT edilir.
+    2. En eski gruptan başlanarak hedef miktara ulaşana kadar kontenjan tahsis edilir.
+    3. Bir gruptan yalnızca kontenjanı tamamlayan kadar etiket bağlanır (saat sırası).
+       Sınırdaki etiketin sadece gereken kısmı yazılır.
+    4. Kontenjanı aşan aynı gün etiketleri bu sevkiyata kilitlenmez; sonraki sevkiyat alır.
     """
     if not items or requested_quantity <= 0:
         return FifoGroupResult(
@@ -87,16 +87,21 @@ def calculate_fifo_groups(
 
         included_dates_list.append(g_key)
 
+        remaining_in_group = group_allocated_quota
         for item in group_items:
+            if remaining_in_group <= 0:
+                break
+            take = min(item.quantity, remaining_in_group)
             allocations.append(FifoAllocation(
                 label=item.label,
                 inventory_label_id=item.id,
                 reference=item.reference,
                 total_quantity=item.quantity,
-                allocated_quantity=item.quantity,
+                allocated_quantity=take,
                 fifo_date=item.fifo_date,
                 fifo_group_date=g_key,
             ))
+            remaining_in_group -= take
 
         cumulative += group_allocated_quota
 

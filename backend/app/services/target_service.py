@@ -24,14 +24,19 @@ def list_targets(db: Session) -> list[TargetRow]:
     ]
 
 
-def add_target(db: Session, reference: str, target_quantity: Decimal) -> TargetRow:
+def add_target(
+    db: Session,
+    reference: str,
+    target_quantity: Decimal,
+    source_name: str | None = None,
+) -> TargetRow:
     ref = reference.strip()
     if not ref:
         raise ValueError("Referans boş olamaz")
     if target_quantity <= 0:
         raise ValueError("Miktar geçersiz")
 
-    row = ShipmentTarget(reference=ref, target_quantity=target_quantity)
+    row = ShipmentTarget(reference=ref, target_quantity=target_quantity, source_name=source_name)
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -40,6 +45,14 @@ def add_target(db: Session, reference: str, target_quantity: Decimal) -> TargetR
 
 def clear_targets(db: Session):
     db.query(ShipmentTarget).delete()
+    db.commit()
+
+
+def delete_target(db: Session, target_id: int) -> None:
+    row = db.query(ShipmentTarget).filter(ShipmentTarget.id == target_id).first()
+    if row is None:
+        raise ValueError("Hedef bulunamadı")
+    db.delete(row)
     db.commit()
 
 
@@ -74,7 +87,8 @@ def find_shipments(db: Session, hourly_fifo: bool = False) -> list[dict]:
     # Bu batch'teki tüm referanslar TEK BİR SEVKİYAT GRUBU'na aittir (1. Sevkiyat, 2. Sevkiyat...)
     max_gid = db.query(func.max(Shipment.group_id)).scalar()
     next_group_id = (max_gid or 0) + 1
-    group_name = f"{next_group_id}. Sevkiyat"
+    named = next((t.source_name for t in targets if t.source_name), None)
+    group_name = named or f"{next_group_id}. Sevkiyat"
 
     results = []
     errors = []
