@@ -207,7 +207,11 @@ def get_shipment_manifest(db: Session) -> list[dict]:
     shipments = (
         db.query(Shipment)
         .filter(Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]))
-        .order_by(Shipment.created_at.desc())
+        .order_by(
+            Shipment.sort_order.asc().nulls_last(),
+            Shipment.created_at.asc(),
+            Shipment.id.asc(),
+        )
         .all()
     )
 

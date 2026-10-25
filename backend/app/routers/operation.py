@@ -15,7 +15,7 @@ from app.services.target_service import list_targets, add_target, clear_targets,
 from app.services.shipment_excel_import import UNSUITABLE_SHIPMENT, import_shipment_targets_excel
 from app.services.shipment_service import (
     get_active_shipments, get_shipment_progress, rename_shipment,
-    get_shipment_groups, rename_shipment_group,
+    get_shipment_groups, rename_shipment_group, reorder_shipment_groups,
 )
 from app.services.recalculate_job import get_recalculate_status, start_recalculate
 from app.services.scan_service import process_global_scan
@@ -288,6 +288,21 @@ from pydantic import BaseModel as _BaseModel
 
 class _RenameRequest(_BaseModel):
     name: str
+
+
+class _OrderRequest(_BaseModel):
+    group_ids: list[int]
+
+
+@router.put("/groups/order", response_model=list[ShipmentGroupSchema])
+def reorder_groups_endpoint(req: _OrderRequest, db: Session = Depends(get_db)):
+    """Sevkiyat listesinin sırasını kullanıcının dizisine göre kaydeder."""
+    try:
+        groups = reorder_shipment_groups(db, req.group_ids)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    _broadcast_full_status(db, "reorder")
+    return [ShipmentGroupSchema(**g) for g in groups]
 
 
 @router.patch("/{shipment_id}/name", response_model=ShipmentProgressSchema)

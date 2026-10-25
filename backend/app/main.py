@@ -15,6 +15,38 @@ from app.ws_manager import ws_manager
 import asyncio
 
 
+def _ensure_shipment_sort_order() -> None:
+    """Eski veritabanında liste sırası yoksa ekler ve mevcut sevkiyatları korur."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(database.engine)
+    if "shipments" not in inspector.get_table_names():
+        return
+    columns = {col["name"] for col in inspector.get_columns("shipments")}
+    if "sort_order" not in columns:
+        with database.engine.begin() as conn:
+            conn.execute(text("ALTER TABLE shipments ADD COLUMN sort_order INTEGER"))
+    with database.engine.begin() as conn:
+        rows = conn.execute(text(
+            "SELECT id, group_id, created_at FROM shipments "
+            "WHERE UPPER(status) IN ('ACTIVE', 'COMPLETED') "
+            "ORDER BY created_at ASC, id ASC"
+        )).fetchall()
+        rank: dict[int, int] = {}
+        next_rank = 0
+        for row in rows:
+            gid = row.group_id if row.group_id is not None else row.id
+            if gid not in rank:
+                rank[gid] = next_rank
+                next_rank += 1
+        for row in rows:
+            gid = row.group_id if row.group_id is not None else row.id
+            conn.execute(
+                text("UPDATE shipments SET sort_order = :ord WHERE id = :id AND sort_order IS NULL"),
+                {"ord": rank[gid], "id": row.id},
+            )
+
+
 def _ensure_shipment_stock_note() -> None:
     """Eski veritabanında stok uyarı sütunu yoksa ekler."""
     from sqlalchemy import inspect, text
@@ -51,6 +83,7 @@ async def lifespan(app: FastAPI):
     database.Base.metadata.create_all(bind=database.engine)
     _ensure_target_source_name()
     _ensure_shipment_stock_note()
+    _ensure_shipment_sort_order()
     db = database.SessionLocal()
     try:
         backfill_missing_quotas(db)

@@ -94,6 +94,7 @@ def create_shipment_from_reference(
         group_id = (max_gid or 0) + 1
     if group_name is None:
         group_name = f"{group_id}. Sevkiyat"
+    sort_order = _sort_order_for_group(db, group_id)
 
     def open_without_stock(note: str) -> ShipmentCreateResult:
         shipment = Shipment(
@@ -104,6 +105,7 @@ def create_shipment_from_reference(
             status=ShipmentStatus.ACTIVE,
             hourly_fifo=hourly_fifo,
             stock_note=note,
+            sort_order=sort_order,
         )
         db.add(shipment)
         db.commit()
@@ -161,6 +163,7 @@ def create_shipment_from_reference(
         requested_quantity=requested_quantity,
         status=ShipmentStatus.ACTIVE,
         hourly_fifo=hourly_fifo,
+        sort_order=sort_order,
     )
     db.add(shipment)
     db.flush()
@@ -357,13 +360,43 @@ def _allocate_remaining(
     return allocations
 
 
+def _sort_order_for_group(db: Session, group_id: int) -> int:
+    existing = (
+        db.query(Shipment.sort_order)
+        .filter(Shipment.group_id == group_id, Shipment.sort_order.isnot(None))
+        .limit(1)
+        .scalar()
+    )
+    if existing is not None:
+        return int(existing)
+    current = db.query(func.max(Shipment.sort_order)).scalar()
+    return int(current or 0) + 1
+
+
+def _shipment_order():
+    return (
+        Shipment.sort_order.asc().nulls_last(),
+        Shipment.created_at.asc(),
+        Shipment.id.asc(),
+    )
+
+
+def shipment_rank(shipment: Shipment):
+    created = shipment.created_at or datetime.min
+    return (
+        shipment.sort_order if shipment.sort_order is not None else 10**9,
+        created,
+        shipment.id or 0,
+    )
+
+
 def ideal_fifo_dates(db: Session, shipments: list[Shipment]) -> dict[int, set[datetime]]:
     """Her sevkiyatın, güncel stokta baştan hesaplanan FIFO tarihlerini döner.
 
     Okutmalar bu pencereyi kaydırmaz. Bir okutmanın tarihi bu kümede yoksa
     yeni hesaba göre FIFO dışındadır.
     """
-    ordered = sorted(shipments, key=lambda s: (s.created_at or datetime.min, s.id))
+    ordered = sorted(shipments, key=shipment_rank)
     references = {s.reference for s in ordered}
     if not references:
         return {}
@@ -407,7 +440,7 @@ def recalculate_shipments(db: Session, on_progress=None) -> dict:
     shipments = (
         db.query(Shipment)
         .filter(Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]))
-        .order_by(Shipment.created_at.asc(), Shipment.id.asc())
+        .order_by(*_shipment_order())
         .all()
     )
     if not shipments:
@@ -543,7 +576,7 @@ def get_shipment_groups(db: Session) -> list[dict]:
     shipments = (
         db.query(Shipment)
         .filter(Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]))
-        .order_by(Shipment.created_at.asc(), Shipment.id.asc())
+        .order_by(*_shipment_order())
         .all()
     )
     if not shipments:
@@ -586,6 +619,40 @@ def get_shipment_groups(db: Session) -> list[dict]:
         })
 
     return result
+
+
+def reorder_shipment_groups(db: Session, group_ids: list[int]) -> list[dict]:
+    """Sevkiyat kartlarının liste sırasını kullanıcının verdiği diziye çeker."""
+    shipments = (
+        db.query(Shipment)
+        .filter(Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]))
+        .all()
+    )
+    by_group: dict[int, list[Shipment]] = {}
+    for shipment in shipments:
+        gid = shipment.group_id if shipment.group_id is not None else shipment.id
+        by_group.setdefault(gid, []).append(shipment)
+
+    unknown = [gid for gid in group_ids if gid not in by_group]
+    if unknown:
+        raise ValueError("Listede olmayan sevkiyat var")
+    if len(group_ids) != len(set(group_ids)):
+        raise ValueError("Sevkiyat sırası tekrar ediyor")
+
+    placed: set[int] = set()
+    for index, gid in enumerate(group_ids):
+        placed.add(gid)
+        for shipment in by_group[gid]:
+            shipment.sort_order = index
+    tail = len(group_ids)
+    for gid, rows in by_group.items():
+        if gid in placed:
+            continue
+        for shipment in rows:
+            shipment.sort_order = tail
+        tail += 1
+    db.commit()
+    return get_shipment_groups(db)
 
 
 def get_active_shipments(db: Session) -> list[dict]:

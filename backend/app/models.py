@@ -50,6 +50,7 @@ class Shipment(Base):
     id = Column(Integer, primary_key=True, index=True)
     group_id = Column(Integer, nullable=True, index=True)
     group_name = Column(String(200), nullable=True)
+    sort_order = Column(Integer, nullable=True, index=True)
     reference = Column(String(200), nullable=False, index=True)
     requested_quantity = Column(Numeric(12, 2), nullable=False)
     status = Column(SAEnum(ShipmentStatus), default=ShipmentStatus.ACTIVE, index=True)

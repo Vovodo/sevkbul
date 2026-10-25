@@ -38,6 +38,8 @@ export default function OperationPage() {
   const [removeText, setRemoveText] = useState('');
   const [error, setError] = useState('');
   const [dropNote, setDropNote] = useState('');
+  const [dragGroupId, setDragGroupId] = useState<number | null>(null);
+  const [dropGroupId, setDropGroupId] = useState<number | null>(null);
   const [fileDrag, setFileDrag] = useState(false);
   const [hourlyFifo, setHourlyFifo] = useState<boolean>(() => {
     return localStorage.getItem('hourlyFifo') === 'true';
@@ -587,6 +589,25 @@ export default function OperationPage() {
     }
   };
 
+  const reorderGroups = async (sourceId: number, targetId: number) => {
+    if (sourceId === targetId) return;
+    const from = groups.findIndex(g => g.group_id === sourceId);
+    const to = groups.findIndex(g => g.group_id === targetId);
+    if (from < 0 || to < 0) return;
+    const next = [...groups];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    const ordered = next.map((g, i) => ({ ...g, index: i + 1 }));
+    setGroups(ordered);
+    try {
+      const saved = await api.reorderGroups(ordered.map(g => g.group_id));
+      setGroups(saved);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Sıra kaydedilemedi');
+      api.getGroups().then(setGroups).catch(() => {});
+    }
+  };
+
   const handleRenameGroup = (groupId: number, name: string) => {
     setGroups(prev => prev.map(g =>
       g.group_id === groupId ? { ...g, name: name || `${g.index}. Sevkiyat` } : g
@@ -882,6 +903,19 @@ export default function OperationPage() {
                 onUndoScan={handleUndoScan}
                 onRenameGroup={handleRenameGroup}
                 onRemove={askRemoveGroup}
+                dragging={dragGroupId === g.group_id}
+                dropTarget={dropGroupId === g.group_id && dragGroupId !== g.group_id}
+                onDragStart={setDragGroupId}
+                onDragOver={setDropGroupId}
+                onDrop={targetId => {
+                  if (dragGroupId != null) void reorderGroups(dragGroupId, targetId);
+                  setDragGroupId(null);
+                  setDropGroupId(null);
+                }}
+                onDragEnd={() => {
+                  setDragGroupId(null);
+                  setDropGroupId(null);
+                }}
               />
             ))}
           </div>

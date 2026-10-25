@@ -639,3 +639,19 @@ class TestSelectedShipmentScanning:
         # 1. Sevkiyat seçiliyken 2. Sevkiyat'a ait etiket SEVKİYAT DIŞI olmalı!
         scan_err = process_global_scan(db, "LBL-REF-4-1", target_group_id=groups2[0]["group_id"])
         assert scan_err.result == ScanResult.OUTSIDE_SHIPMENT.value
+
+
+def test_user_can_reorder_shipment_list(db):
+    make_inventory(db, "ORD-1", "ORD-A", 30, datetime(2026, 6, 1, 8, 0))
+    make_inventory(db, "ORD-2", "ORD-B", 30, datetime(2026, 6, 2, 8, 0))
+    create_shipment_from_reference(db, "ORD-A", Decimal("30"))
+    create_shipment_from_reference(db, "ORD-B", Decimal("30"))
+    from app.services.shipment_service import get_shipment_groups, reorder_shipment_groups
+
+    before = get_shipment_groups(db)
+    assert [g["name"] for g in before] == ["1. Sevkiyat", "2. Sevkiyat"]
+    flipped = reorder_shipment_groups(db, [before[1]["group_id"], before[0]["group_id"]])
+    assert [g["group_id"] for g in flipped] == [before[1]["group_id"], before[0]["group_id"]]
+    assert [g["index"] for g in flipped] == [1, 2]
+    again = get_shipment_groups(db)
+    assert [g["group_id"] for g in again] == [g["group_id"] for g in flipped]

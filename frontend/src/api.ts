@@ -249,6 +249,13 @@ export const api = {
       method: 'DELETE',
     }),
 
+  reorderGroups: (groupIds: number[]) =>
+    request<ShipmentGroup[]>('/api/shipment/groups/order', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group_ids: groupIds }),
+    }),
+
   getScannedLabels: (shipmentId: number) =>
     request<ScannedLabel[]>(`/api/shipment/${shipmentId}/scanned`),
 

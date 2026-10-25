@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, ChevronUp, Pencil, TriangleAlert } from 'lucide-react';
+import { ChevronDown, ChevronUp, GripVertical, Pencil, TriangleAlert } from 'lucide-react';
 import { api, CandidateLabel, ShipmentGroup, ShipmentManifest, ShipmentProgress, ShipmentManifestItem } from '../api';
 
 interface ShipmentCardProps {
@@ -10,6 +10,12 @@ interface ShipmentCardProps {
   onUndoScan: (shipmentId: number, label: string) => Promise<void>;
   onRenameGroup: (groupId: number, name: string) => void;
   onRemove: (groupId: number) => void;
+  dragging?: boolean;
+  dropTarget?: boolean;
+  onDragStart?: (groupId: number) => void;
+  onDragOver?: (groupId: number) => void;
+  onDrop?: (groupId: number) => void;
+  onDragEnd?: () => void;
 }
 
 export default function ShipmentCard({
@@ -20,6 +26,12 @@ export default function ShipmentCard({
   onUndoScan,
   onRenameGroup,
   onRemove,
+  dragging,
+  dropTarget,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
 }: ShipmentCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [expandedRefs, setExpandedRefs] = useState<Record<number, boolean>>({});
@@ -186,8 +198,37 @@ export default function ShipmentCard({
   };
 
   return (
-    <article className={`shipment-card-v2 ${isDone ? 'sc-done' : 'sc-active'} ${isSelected ? 'sc-selected' : ''} ${livePulse ? 'sc-pulse' : ''}`}>
+    <article
+      className={`shipment-card-v2 ${isDone ? 'sc-done' : 'sc-active'} ${isSelected ? 'sc-selected' : ''} ${livePulse ? 'sc-pulse' : ''} ${dragging ? 'is-dragging' : ''} ${dropTarget ? 'is-drop' : ''}`}
+      onDragOver={e => {
+        if (!onDrop) return;
+        e.preventDefault();
+        onDragOver?.(g.group_id);
+      }}
+      onDrop={e => {
+        if (!onDrop) return;
+        e.preventDefault();
+        onDrop(g.group_id);
+      }}
+    >
       <div className="sc-line" onClick={() => setExpanded(v => !v)}>
+        <button
+          type="button"
+          className="sc-drag"
+          draggable
+          title="Sırayı değiştirmek için sürükle"
+          aria-label="Sırayı değiştir"
+          onClick={e => e.stopPropagation()}
+          onDragStart={e => {
+            e.stopPropagation();
+            e.dataTransfer.setData('text/plain', String(g.group_id));
+            e.dataTransfer.effectAllowed = 'move';
+            onDragStart?.(g.group_id);
+          }}
+          onDragEnd={() => onDragEnd?.()}
+        >
+          <GripVertical size={14} />
+        </button>
         <span className="sc-index">{index}</span>
         <div className="sc-name-wrap" onClick={e => e.stopPropagation()}>
           {editing ? (

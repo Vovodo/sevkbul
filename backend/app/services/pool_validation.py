@@ -187,7 +187,11 @@ def check_label_in_shipment_pool(
             Shipment.reference == inv.reference,
             Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
         )
-        .order_by(Shipment.created_at.asc(), Shipment.id.asc())
+        .order_by(
+            Shipment.sort_order.asc().nulls_last(),
+            Shipment.created_at.asc(),
+            Shipment.id.asc(),
+        )
         .all()
     )
     if not candidates:
