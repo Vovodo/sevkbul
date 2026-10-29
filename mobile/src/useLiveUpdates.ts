@@ -1,18 +1,20 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { API_BASE } from './api';
+import { getApiBase } from './api';
 
 export function getWsUrl(): string {
-  if (API_BASE) {
-    // https://xxx.rfqcollector.com → wss://xxx.rfqcollector.com/ws
-    return API_BASE.replace(/^http/, 'ws') + '/ws';
+  const base = getApiBase();
+  if (base) {
+    // Render / Production: https://xxx.rfqcollector.com → wss://xxx.rfqcollector.com/ws
+    return base.replace(/^http/, 'ws') + '/ws';
   }
-  // API_BASE boşken (VITE_API_URL girilmemişse) production backend'e doğrudan bağlan
-  // window.location.host mobile servisine işaret edebilir, backend'e değil!
-  // Bu yüzden hardcoded production backend URL kullanılır.
+  if (typeof window !== 'undefined') {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${window.location.host}/ws`;
+  }
   return 'wss://sevkbulapi.rfqcollector.com/ws';
 }
 
-export type WsEventType = 'scan' | 'undo' | 'reset' | 'find' | 'target_add' | 'target_clear' | 'target_import' | 'stock_import';
+export type WsEventType = 'scan' | 'undo' | 'reset' | 'find' | 'target_add' | 'target_clear' | 'target_import' | 'stock_import' | 'group_delete' | 'recalculate' | 'recalculate_progress';
 
 export interface WsMessage {
   event: WsEventType;
@@ -23,78 +25,63 @@ export interface WsMessage {
 type WsMessageHandler = (msg: WsMessage) => void;
 
 /**
- * Gerçek zamanlı mobil WebSocket hook'u.
- * Otomatik yeniden bağlanma ve canlı durum (connected / disconnected) takibi.
+ * Gerçek zamanlı güncelleme WebSocket hook'u.
+ * Otomatik yeniden bağlanma desteği ile.
  */
-export function useLiveUpdates(onMessage?: WsMessageHandler) {
-  const [isConnected, setIsConnected] = useState<boolean>(false);
+export function useLiveUpdates(onMessage: WsMessageHandler): boolean {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handlerRef = useRef(onMessage);
+  const [connected, setConnected] = useState(false);
   handlerRef.current = onMessage;
 
   const connect = useCallback(() => {
+    // Halihazırda bağlıysa tekrar bağlanma
     if (wsRef.current && (wsRef.current.readyState === WebSocket.CONNECTING || wsRef.current.readyState === WebSocket.OPEN)) {
       return;
     }
 
-    try {
-      const url = getWsUrl();
-      const ws = new WebSocket(url);
+    const url = getWsUrl();
+    const ws = new WebSocket(url);
 
-      ws.onopen = () => {
-        setIsConnected(true);
-        if (reconnectTimer.current) {
-          clearTimeout(reconnectTimer.current);
-          reconnectTimer.current = null;
-        }
-      };
+    ws.onopen = () => {
+      setConnected(true);
+      if (reconnectTimer.current) {
+        clearTimeout(reconnectTimer.current);
+        reconnectTimer.current = null;
+      }
+    };
 
-      ws.onmessage = (evt) => {
-        try {
-          const msg = JSON.parse(evt.data) as WsMessage;
-          if (handlerRef.current) {
-            handlerRef.current(msg);
-          }
-        } catch {
-          // ignore malformed frame
-        }
-      };
+    ws.onmessage = (evt) => {
+      try {
+        const msg = JSON.parse(evt.data) as WsMessage;
+        handlerRef.current(msg);
+      } catch {
+        // Geçersiz mesaj — yoksay
+      }
+    };
 
-      ws.onclose = () => {
-        setIsConnected(false);
-        wsRef.current = null;
-        // 3 saniye sonra otomatik yeniden bağlan
-        reconnectTimer.current = setTimeout(connect, 3000);
-      };
-
-      ws.onerror = () => {
-        setIsConnected(false);
-        try {
-          ws.close();
-        } catch {
-          // ignore
-        }
-      };
-
-      wsRef.current = ws;
-    } catch {
-      setIsConnected(false);
+    ws.onclose = () => {
+      setConnected(false);
+      wsRef.current = null;
       reconnectTimer.current = setTimeout(connect, 3000);
-    }
+    };
+
+    ws.onerror = () => {
+      // Hata durumunda bağlantıyı kapat (onclose yeniden bağlanmayı tetikleyecek)
+      ws.close();
+    };
+
+    wsRef.current = ws;
   }, []);
 
   useEffect(() => {
     connect();
 
-    // 25s ping interval (keep-alive)
+    // 25 saniyede bir ping gönder (bağlantıyı canlı tut — Render 60s idle timeout)
     const pingInterval = setInterval(() => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
-        try {
-          wsRef.current.send('ping');
-        } catch {
-          // ignore
-        }
+        wsRef.current.send('ping');
       }
     }, 25000);
 
@@ -105,15 +92,11 @@ export function useLiveUpdates(onMessage?: WsMessageHandler) {
       }
       if (wsRef.current) {
         wsRef.current.onclose = null;
-        try {
-          wsRef.current.close();
-        } catch {
-          // ignore
-        }
+        wsRef.current.close();
         wsRef.current = null;
       }
     };
   }, [connect]);
 
-  return { isConnected };
+  return connected;
 }

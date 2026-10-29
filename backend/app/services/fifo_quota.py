@@ -86,11 +86,6 @@ def quota_map(db: Session, shipment: Shipment) -> dict[datetime, Decimal]:
     rows = db.query(ShipmentDateQuota).filter(
         ShipmentDateQuota.shipment_id == shipment.id
     ).all()
-    if not rows:
-        backfill_missing_quotas(db)
-        rows = db.query(ShipmentDateQuota).filter(
-            ShipmentDateQuota.shipment_id == shipment.id
-        ).all()
     hourly = bool(shipment.hourly_fifo)
     return {
         group_key(row.fifo_group, hourly): Decimal(row.quota_quantity)

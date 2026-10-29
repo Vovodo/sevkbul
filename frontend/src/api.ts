@@ -280,7 +280,13 @@ export const api = {
 
   getGroups: () => request<ShipmentGroup[]>('/api/shipment/groups'),
 
-  getManifest: () => request<ShipmentManifest[]>('/api/shipment/manifest'),
+  getManifest: (opts?: { groupId?: number; shipmentId?: number }) => {
+    const params = new URLSearchParams();
+    if (opts?.groupId != null) params.set('group_id', String(opts.groupId));
+    if (opts?.shipmentId != null) params.set('shipment_id', String(opts.shipmentId));
+    const qs = params.toString();
+    return request<ShipmentManifest[]>(`/api/shipment/manifest${qs ? `?${qs}` : ''}`);
+  },
 
   getCandidates: (shipmentId: number, fifoGroup: string) =>
     request<{ remaining: number; labels: CandidateLabel[] }>(

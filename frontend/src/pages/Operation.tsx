@@ -40,6 +40,12 @@ export default function OperationPage() {
   const [removeText, setRemoveText] = useState('');
   const [error, setError] = useState('');
   const [dropNote, setDropNote] = useState('');
+  const [uploadOverlay, setUploadOverlay] = useState<{
+    title: string;
+    subtitle: string;
+    percent: number;
+    phase: 'working' | 'done';
+  } | null>(null);
   const [dragGroupId, setDragGroupId] = useState<number | null>(null);
   const [dropGroupId, setDropGroupId] = useState<number | null>(null);
   const [fileDrag, setFileDrag] = useState(false);
@@ -52,9 +58,9 @@ export default function OperationPage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const lastPresented = useRef<{ key: string; at: number } | null>(null);
   const liveRef = useRef(false);
-  const recalcPoll = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recalcPoll = useRef<number | null>(null);
   const recalcJob = useRef<number | null>(null);
-  const recalcHide = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recalcHide = useRef<number | null>(null);
 
   // Aktif seçili sevkiyat grubunu otomatik belirle
   useEffect(() => {
@@ -304,10 +310,31 @@ export default function OperationPage() {
     setLoading(replace ? 'stock' : 'stock-append');
     setError('');
     setDropNote('');
+    setUploadOverlay({
+      title: replace ? 'Stok Exceli yükleniyor' : 'Stok listesi güncelleniyor',
+      subtitle: `${file.name} okunuyor ve etiketler aktarılıyor...`,
+      percent: 45,
+      phase: 'working',
+    });
+    const timer = window.setInterval(() => {
+      setUploadOverlay(prev =>
+        prev && prev.phase === 'working'
+          ? { ...prev, percent: Math.min(92, prev.percent + 12) }
+          : prev
+      );
+    }, 180);
     try {
       const r = await api.importStock(file, replace);
+      window.clearInterval(timer);
       setStockLoaded(true);
       setStockCount(r.successful);
+      setUploadOverlay({
+        title: 'Stok Exceli yüklendi',
+        subtitle: `${r.successful.toLocaleString('tr-TR')} etiket hazır.`,
+        percent: 100,
+        phase: 'done',
+      });
+      window.setTimeout(() => setUploadOverlay(null), 700);
       if (!replace && groups.length > 0) {
         setDropNote(`Stok güncellendi (${r.successful.toLocaleString('tr-TR')} etiket). Sevkiyatlar yeni stokla yeniden hesaplanıyor...`);
         await triggerRecalculateQuiet();
@@ -315,6 +342,8 @@ export default function OperationPage() {
         setDropNote(`Stok güncellendi (${r.successful.toLocaleString('tr-TR')} etiket).`);
       }
     } catch (e: unknown) {
+      window.clearInterval(timer);
+      setUploadOverlay(null);
       setError(e instanceof Error ? e.message : 'Stok yüklenemedi');
     } finally {
       setLoading('');
@@ -325,13 +354,36 @@ export default function OperationPage() {
     setLoading('shipment');
     setError('');
     setDropNote('');
+    setUploadOverlay({
+      title: 'Sevkiyat Exceli okunuyor',
+      subtitle: `${file.name} analiz ediliyor ve hedefler hazırlanıyor...`,
+      percent: 40,
+      phase: 'working',
+    });
+    const timer = window.setInterval(() => {
+      setUploadOverlay(prev =>
+        prev && prev.phase === 'working'
+          ? { ...prev, percent: Math.min(92, prev.percent + 15) }
+          : prev
+      );
+    }, 140);
     try {
       const r = await api.importTargetsExcel(file);
+      window.clearInterval(timer);
       setTargets(r.targets);
+      setUploadOverlay({
+        title: 'Sevkiyat Exceli yüklendi',
+        subtitle: `${r.successful} referans hedefi hazır.`,
+        percent: 100,
+        phase: 'done',
+      });
+      window.setTimeout(() => setUploadOverlay(null), 650);
       if (r.successful > 0) {
-        setDropNote(`${r.successful} hedef hazır. Sevkiyatı oluşturmak için alttaki butonu kullan.`);
+        setDropNote(`${r.successful} hedef hazır (${file.name.replace(/\.xlsx?$/i, '')}). Sevkiyatı oluşturmak için alttaki butonu kullan.`);
       }
     } catch (e: unknown) {
+      window.clearInterval(timer);
+      setUploadOverlay(null);
       setError(e instanceof Error ? e.message : 'Sevkiyat Exceli yüklenemedi');
     } finally {
       setLoading('');
@@ -517,16 +569,40 @@ export default function OperationPage() {
   const handleFind = async () => {
     setLoading('find');
     setError('');
+    setUploadOverlay({
+      title: 'Sevkiyat FIFO havuzu hesaplanıyor',
+      subtitle: `${targets.length} referans için en eski FIFO tarihleri eşleştiriliyor...`,
+      percent: 45,
+      phase: 'working',
+    });
+    const timer = window.setInterval(() => {
+      setUploadOverlay(prev =>
+        prev && prev.phase === 'working'
+          ? { ...prev, percent: Math.min(94, prev.percent + 14) }
+          : prev
+      );
+    }, 150);
     try {
-      const r = await api.findShipments(hourlyFifo);
+      await api.findShipments(hourlyFifo);
       const updatedGroups = await api.getGroups();
+      window.clearInterval(timer);
       setGroups(updatedGroups);
       setTargets([]);
+      setDropNote('');
+      setUploadOverlay({
+        title: 'Sevkiyat yayınlandı',
+        subtitle: 'FIFO havuzu hazır.',
+        percent: 100,
+        phase: 'done',
+      });
+      window.setTimeout(() => setUploadOverlay(null), 550);
       if (updatedGroups.length > 0) {
         setPhase('scanning');
         setShowSetup(false);
       }
     } catch (e: unknown) {
+      window.clearInterval(timer);
+      setUploadOverlay(null);
       setError(e instanceof Error ? e.message : 'Sevkiyat bulunamadı');
     } finally {
       setLoading('');
@@ -1283,6 +1359,28 @@ export default function OperationPage() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {uploadOverlay && (
+        <div className="recalc-overlay" role="dialog" aria-modal="true" aria-label={uploadOverlay.title}>
+          <div className="recalc-card">
+            <h3>{uploadOverlay.title}</h3>
+            <p>{uploadOverlay.subtitle}</p>
+            <div
+              className="recalc-track"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={uploadOverlay.percent}
+            >
+              <div className="recalc-fill" style={{ width: `${Math.max(uploadOverlay.percent, 12)}%` }} />
+            </div>
+            <div className="recalc-meta">
+              <span>{uploadOverlay.phase === 'done' ? 'Tamamlandı' : 'İşleniyor...'}</span>
+              <strong>%{uploadOverlay.percent}</strong>
+            </div>
+          </div>
         </div>
       )}
 

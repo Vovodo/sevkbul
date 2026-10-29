@@ -126,15 +126,6 @@ export default function ShipmentCard({
     setTimeout(() => nameRef.current?.focus(), 30);
   };
 
-  const fetchManifest = () => {
-    if (!manifestFlight.current) {
-      manifestFlight.current = api.getManifest().finally(() => {
-        manifestFlight.current = null;
-      });
-    }
-    return manifestFlight.current;
-  };
-
   const applyManifest = async (ids: number[]) => {
     if (!ids.length) return;
     const pending = ids.filter(id => manifestMapRef.current[id] == null);
@@ -146,7 +137,10 @@ export default function ShipmentCard({
       });
     }
     try {
-      const all = await fetchManifest();
+      const all =
+        ids.length === 1
+          ? await api.getManifest({ shipmentId: ids[0] })
+          : await api.getManifest({ groupId: g.group_id });
       setManifestMap(prev => {
         const next = { ...prev };
         ids.forEach(id => {

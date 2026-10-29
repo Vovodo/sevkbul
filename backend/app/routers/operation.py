@@ -217,9 +217,13 @@ def shipment_groups_status(db: Session = Depends(get_db)):
 
 
 @router.get("/manifest", response_model=list[ShipmentManifestSchema])
-def shipment_manifest(db: Session = Depends(get_db)):
-    """Aktif ve tamamlanmış tüm sevkiyatlar için sistemin hesapladığı tam manifest bilgisini döner."""
-    return get_shipment_manifest(db)
+def shipment_manifest(
+    group_id: int | None = None,
+    shipment_id: int | None = None,
+    db: Session = Depends(get_db),
+):
+    """Aktif ve tamamlanmış sevkiyatlar için sistemin hesapladığı tam manifest bilgisini döner."""
+    return get_shipment_manifest(db, group_id=group_id, shipment_id=shipment_id)
 
 
 @router.get("/export")

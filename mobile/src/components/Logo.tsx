@@ -14,14 +14,14 @@ interface LogoProps {
 const SIZE_MAP: Record<string, number> = {
   xs: 20,
   sm: 28,
-  md: 36,
-  lg: 48,
-  xl: 68,
-  '2xl': 96,
+  md: 38,
+  lg: 52,
+  xl: 72,
+  '2xl': 100,
 };
 
 export const LogoIcon: React.FC<{ size?: number; className?: string; animated?: boolean }> = ({
-  size = 36,
+  size = 38,
   className = '',
   animated = false,
 }) => {
@@ -37,19 +37,19 @@ export const LogoIcon: React.FC<{ size?: number; className?: string; animated?: 
       aria-label="SevkiyatBul Logo"
     >
       <defs>
-        <linearGradient id="sbPrimaryMob" x1="0%" y1="0%" x2="100%" y2="100%">
+        <linearGradient id="sbPrimary" x1="0%" y1="0%" x2="100%" y2="100%">
           <stop offset="0%" stopColor="#38bdf8" />
           <stop offset="50%" stopColor="#2563eb" />
           <stop offset="100%" stopColor="#1d4ed8" />
         </linearGradient>
 
-        <linearGradient id="sbAccentMob" x1="0%" y1="100%" x2="100%" y2="0%">
+        <linearGradient id="sbAccent" x1="0%" y1="100%" x2="100%" y2="0%">
           <stop offset="0%" stopColor="#10b981" />
           <stop offset="60%" stopColor="#06b6d4" />
           <stop offset="100%" stopColor="#38bdf8" />
         </linearGradient>
 
-        <linearGradient id="sbBeamMob" x1="0%" y1="0%" x2="100%" y2="0%">
+        <linearGradient id="sbBeam" x1="0%" y1="0%" x2="100%" y2="0%">
           <stop offset="0%" stopColor="#38bdf8" stopOpacity="0" />
           <stop offset="30%" stopColor="#38bdf8" stopOpacity="0.85" />
           <stop offset="50%" stopColor="#ffffff" stopOpacity="1" />
@@ -57,12 +57,12 @@ export const LogoIcon: React.FC<{ size?: number; className?: string; animated?: 
           <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
         </linearGradient>
 
-        <linearGradient id="sbBoxTopMob" x1="0%" y1="0%" x2="100%" y2="100%">
+        <linearGradient id="sbBoxTop" x1="0%" y1="0%" x2="100%" y2="100%">
           <stop offset="0%" stopColor="#1e293b" />
           <stop offset="100%" stopColor="#0f172a" />
         </linearGradient>
 
-        <filter id="sbGlowMob" x="-20%" y="-20%" width="140%" height="140%">
+        <filter id="sbGlow" x="-20%" y="-20%" width="140%" height="140%">
           <feGaussianBlur stdDeviation="10" result="blur" />
           <feComposite in="SourceGraphic" in2="blur" operator="over" />
         </filter>
@@ -73,8 +73,8 @@ export const LogoIcon: React.FC<{ size?: number; className?: string; animated?: 
         {/* Top Face */}
         <path
           d="M256 64 L420 156 L256 248 L92 156 Z"
-          fill="url(#sbBoxTopMob)"
-          stroke="url(#sbAccentMob)"
+          fill="url(#sbBoxTop)"
+          stroke="url(#sbAccent)"
           strokeWidth="8"
           strokeLinejoin="round"
         />
@@ -83,7 +83,7 @@ export const LogoIcon: React.FC<{ size?: number; className?: string; animated?: 
         <path
           d="M92 156 L256 248 L256 436 L92 344 Z"
           fill="#0f172a"
-          stroke="url(#sbPrimaryMob)"
+          stroke="url(#sbPrimary)"
           strokeWidth="8"
           strokeLinejoin="round"
         />
@@ -92,7 +92,7 @@ export const LogoIcon: React.FC<{ size?: number; className?: string; animated?: 
         <path
           d="M256 248 L420 156 L420 344 L256 436 Z"
           fill="#131e36"
-          stroke="url(#sbAccentMob)"
+          stroke="url(#sbAccent)"
           strokeWidth="8"
           strokeLinejoin="round"
         />
@@ -100,7 +100,7 @@ export const LogoIcon: React.FC<{ size?: number; className?: string; animated?: 
         {/* Dynamic Stylized FIFO "S" Flow */}
         <path
           d="M370 190 L275 243 L275 320 L350 278"
-          stroke="url(#sbAccentMob)"
+          stroke="url(#sbAccent)"
           strokeWidth="16"
           strokeLinecap="round"
           strokeLinejoin="round"
@@ -108,7 +108,7 @@ export const LogoIcon: React.FC<{ size?: number; className?: string; animated?: 
 
         <path
           d="M162 235 L237 277 L237 355 L142 302"
-          stroke="url(#sbPrimaryMob)"
+          stroke="url(#sbPrimary)"
           strokeWidth="16"
           strokeLinecap="round"
           strokeLinejoin="round"
@@ -118,7 +118,7 @@ export const LogoIcon: React.FC<{ size?: number; className?: string; animated?: 
         <path
           d="M256 215 L285 245 L256 275 L227 245 Z"
           fill="#38bdf8"
-          filter="url(#sbGlowMob)"
+          filter="url(#sbGlow)"
         />
 
         {/* Barcode Lines on Top */}
@@ -130,10 +130,10 @@ export const LogoIcon: React.FC<{ size?: number; className?: string; animated?: 
         {/* Laser Scanning Beam */}
         <path
           d="M70 248 Q256 230 442 248"
-          stroke="url(#sbBeamMob)"
+          stroke="url(#sbBeam)"
           strokeWidth="10"
           strokeLinecap="round"
-          filter="url(#sbGlowMob)"
+          filter="url(#sbGlow)"
         />
 
         {/* Targeting Corners */}
@@ -153,7 +153,7 @@ export default function Logo({
   className = '',
   onClick,
 }: LogoProps) {
-  const pixelSize = typeof size === 'number' ? size : SIZE_MAP[size] || 36;
+  const pixelSize = typeof size === 'number' ? size : SIZE_MAP[size] || 38;
 
   if (variant === 'icon') {
     return (
@@ -174,18 +174,18 @@ export default function Logo({
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: '0.55rem',
+        gap: '0.65rem',
         cursor: onClick ? 'pointer' : 'default',
         userSelect: 'none',
       }}
     >
       <LogoIcon size={pixelSize} animated={animated} />
       <div className="brand-text-block" style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
           <span
             style={{
               fontWeight: 900,
-              fontSize: `${Math.max(13, pixelSize * 0.46)}px`,
+              fontSize: `${Math.max(14, pixelSize * 0.48)}px`,
               letterSpacing: '0.5px',
               background: 'linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%)',
               WebkitBackgroundClip: 'text',
@@ -197,7 +197,7 @@ export default function Logo({
           <span
             style={{
               fontWeight: 900,
-              fontSize: `${Math.max(13, pixelSize * 0.46)}px`,
+              fontSize: `${Math.max(14, pixelSize * 0.48)}px`,
               letterSpacing: '0.5px',
               background: 'linear-gradient(135deg, #38bdf8 0%, #10b981 100%)',
               WebkitBackgroundClip: 'text',
@@ -209,14 +209,14 @@ export default function Logo({
         </div>
         <span
           style={{
-            fontSize: `${Math.max(8, pixelSize * 0.22)}px`,
+            fontSize: `${Math.max(9, pixelSize * 0.23)}px`,
             fontWeight: 700,
-            letterSpacing: '0.8px',
+            letterSpacing: '1px',
             color: '#64748b',
             textTransform: 'uppercase',
           }}
         >
-          FIFO Kontrol
+          FIFO Kontrol Sistemi
         </span>
       </div>
     </div>

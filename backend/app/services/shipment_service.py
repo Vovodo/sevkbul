@@ -86,6 +86,7 @@ def create_shipment_from_reference(
     hourly_fifo: bool = False,
     group_id: int | None = None,
     group_name: str | None = None,
+    auto_commit: bool = True,
 ) -> "ShipmentCreateResult":
     reference = _normalize_ref(reference)
     labels = (
@@ -127,9 +128,11 @@ def create_shipment_from_reference(
             sort_order=sort_order,
         )
         db.add(shipment)
-        db.commit()
-        db.refresh(shipment)
-        lookup_cache.load_shipment(db, shipment.id)
+        db.flush()
+        if auto_commit:
+            db.commit()
+            db.refresh(shipment)
+            lookup_cache.load_shipment(db, shipment.id)
         return ShipmentCreateResult(
             shipment_id=shipment.id,
             reference=reference,
@@ -198,14 +201,15 @@ def create_shipment_from_reference(
         db.add(sl)
 
     record_quotas(db, shipment.id, fifo_result.allocations, hourly_fifo)
+    db.flush()
 
-    db.commit()
-    db.refresh(shipment)
-
-    log_allocation_created(
-        shipment.id, reference, float(requested_quantity), fifo_result.allocations
-    )
-    lookup_cache.load_shipment(db, shipment.id)
+    if auto_commit:
+        db.commit()
+        db.refresh(shipment)
+        log_allocation_created(
+            shipment.id, reference, float(requested_quantity), fifo_result.allocations
+        )
+        lookup_cache.load_shipment(db, shipment.id)
 
     return ShipmentCreateResult(
         shipment_id=shipment.id,

@@ -825,6 +825,70 @@ class TestHighSpeedScanningAndFifoAccuracy:
         # 50 kalemli sevkiyatta dahi ortalama okutma süresi 35 ms'nin çok altında olmalı
         assert avg_ms < 35.0
 
+    def test_120_row_shipment_excel_import_speed_benchmark(self, client):
+        ship_rows = [(f"REF-SPD-{i:03d}", 60) for i in range(1, 121)]
+        ship_bytes = make_shipment_excel(ship_rows)
+
+        t0 = time.perf_counter()
+        res = client.post(
+            "/api/shipment/targets/import",
+            files={"file": ("Hizli_Sevkiyat.xlsx", ship_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        print(f"\n[BENCHMARK] 120 satırlık Sevkiyat Excel import süresi: {elapsed_ms:.2f} ms")
+        assert res.status_code == 200
+        assert res.json()["successful"] == 120
+        assert elapsed_ms < 500.0
+
+    def test_5x109_shipments_manifest_and_single_ref_open_speed_benchmark(self, client):
+        """
+        109 referanslı 5 sevkiyat (toplam 545 sevkiyat kalemi).
+        1. sevkiyat stoğun tamamını alır; 2., 3., 4. ve 5. sevkiyatların tamamında (436 kalem)
+        stok yetersiz (Eksik) kalır.
+        Bu durumda 1. sevkiyatın içindeki bir referansa tıklandığında FIFO listesinin
+        açılma süresi (< 25 ms) ve tüm 545 kalemlik manifestin açılma süresi (< 200 ms) test edilir.
+        """
+        stock_rows = [
+            (f"MNF-{i:03d}-1", f"REF-MNF-{i:03d}", 30, "01.06.2026 08:00")
+            for i in range(1, 110)
+        ]
+        ship_rows = [(f"REF-MNF-{i:03d}", 30) for i in range(1, 110)]
+
+        client.post(
+            "/api/inventory/import/stock",
+            files={"file": ("stok.xlsx", make_stock_excel(stock_rows), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+
+        # 5 adet 109 referanslı sevkiyat ekle (toplam 545 kalem; son 436 kalem stoksuz/Eksik!)
+        for s_idx in range(1, 6):
+            client.post(
+                "/api/shipment/targets/import",
+                files={"file": (f"Sevkiyat_{s_idx}.xlsx", make_shipment_excel(ship_rows), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+            )
+            client.post("/api/shipment/find")
+
+        groups = client.get("/api/shipment/groups").json()
+        assert len(groups) == 5
+        first_sid = groups[0]["items"][0]["shipment_id"]
+
+        # 1) Tek bir referansa tıklama süresi (?shipment_id=...)
+        t0 = time.perf_counter()
+        res_single = client.get(f"/api/shipment/manifest?shipment_id={first_sid}")
+        single_ms = (time.perf_counter() - t0) * 1000
+        assert res_single.status_code == 200
+        assert len(res_single.json()) == 1
+
+        # 2) Tüm 545 kalemlik genel FIFO Listesi açılma süresi
+        t1 = time.perf_counter()
+        res_all = client.get("/api/shipment/manifest")
+        all_ms = (time.perf_counter() - t1) * 1000
+        assert res_all.status_code == 200
+        assert len(res_all.json()) == 545
+
+        print(f"\n[BENCHMARK 5x109=545 Kalem] Tek referans FIFO açılış: {single_ms:.2f} ms | Tüm 545 kalem manifest: {all_ms:.2f} ms")
+        assert single_ms < 50.0
+        assert all_ms < 400.0
+
 
 class TestInventoryHiddenLabelsFeature:
     """

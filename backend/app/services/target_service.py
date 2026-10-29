@@ -121,7 +121,8 @@ def find_shipments(db: Session, hourly_fifo: bool = False) -> list[dict]:
         try:
             created = create_shipment_from_reference(
                 db, ref_val, qty_val, hourly_fifo=hourly_fifo,
-                group_id=next_group_id, group_name=group_name
+                group_id=next_group_id, group_name=group_name,
+                auto_commit=False,
             )
             results.append({
                 "shipment_id": created.shipment_id,
@@ -136,12 +137,13 @@ def find_shipments(db: Session, hourly_fifo: bool = False) -> list[dict]:
             errors.append({"reference": ref_val, "error": str(e)})
 
     if not results and errors:
+        db.rollback()
         raise ValueError(errors[0]["error"])
 
-    db.query(ShipmentTarget).delete()
+    db.query(ShipmentTarget).delete(synchronize_session=False)
     db.commit()
 
-    lookup_cache.rebuild_global_index()
+    lookup_cache.load_all_active(db)
 
     from app.services.shipment_service import get_shipment_groups
     return {"shipments": results, "groups": get_shipment_groups(db), "errors": errors}

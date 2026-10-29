@@ -178,8 +178,14 @@ def import_shipment_targets_excel(
     header_mode = start > 0
 
     if replace:
-        db.query(ShipmentTarget).delete()
-        db.commit()
+        db.query(ShipmentTarget).delete(synchronize_session=False)
+        existing_by_key: dict[str, ShipmentTarget] = {}
+    else:
+        existing_rows = db.query(ShipmentTarget).order_by(ShipmentTarget.id).all()
+        existing_by_key = {r.reference.strip().upper(): r for r in existing_rows}
+
+    new_rows_by_key: dict[str, ShipmentTarget] = {}
+    ordered_new: list[ShipmentTarget] = []
 
     for row_idx, row in enumerate(rows[start:], start=start + 1):
         reference = parse_reference(_cell(row, ref_idx))
@@ -196,16 +202,44 @@ def import_shipment_targets_excel(
                 result.errors.append(ShipmentRowError(row=row_idx, reason="MİKTAR geçersiz"))
             continue
 
-        try:
-            t = add_target(db, reference, quantity, source_name=source_name)
-            result.successful += 1
-            result.targets.append({
-                "id": t.id,
-                "reference": t.reference,
-                "target_quantity": t.target_quantity,
-            })
-        except ValueError as e:
-            result.errors.append(ShipmentRowError(row=row_idx, reason=str(e)))
+        ref_clean = reference.strip()
+        if not ref_clean:
+            if header_mode:
+                result.errors.append(ShipmentRowError(row=row_idx, reason="REFERANS boş"))
+            continue
+        if quantity <= 0:
+            if header_mode:
+                result.errors.append(ShipmentRowError(row=row_idx, reason="Miktar geçersiz"))
+            continue
+
+        rkey = ref_clean.upper()
+        if rkey in existing_by_key:
+            ex = existing_by_key[rkey]
+            ex.target_quantity = Decimal(ex.target_quantity) + Decimal(quantity)
+            if source_name and not ex.source_name:
+                ex.source_name = source_name
+        elif rkey in new_rows_by_key:
+            nw = new_rows_by_key[rkey]
+            nw.target_quantity = Decimal(nw.target_quantity) + Decimal(quantity)
+        else:
+            nw = ShipmentTarget(reference=ref_clean, target_quantity=quantity, source_name=source_name)
+            new_rows_by_key[rkey] = nw
+            ordered_new.append(nw)
+        result.successful += 1
+
+    if ordered_new:
+        db.add_all(ordered_new)
+    db.commit()
+
+    all_targets = db.query(ShipmentTarget).order_by(ShipmentTarget.id).all()
+    result.targets = [
+        {
+            "id": t.id,
+            "reference": t.reference,
+            "target_quantity": float(t.target_quantity),
+        }
+        for t in all_targets
+    ]
 
     if result.successful == 0 and not result.errors:
         result.errors.append(ShipmentRowError(row=0, reason="Sevkiyat satırı bulunamadı"))
