@@ -9,7 +9,7 @@ from app.models import (
 )
 from app.services.fifo_quota import format_group, group_key, quota_map, scanned_on_date
 from app.services.lookup_cache import lookup_cache
-from app.services.shipment_service import get_shipment_progress, ideal_fifo_dates
+from app.services.shipment_service import get_shipment_progress, ideal_fifo_dates, rebalance_reference_pending
 
 
 def delete_shipment_group(db: Session, group_id: int) -> int:
@@ -177,6 +177,7 @@ def undo_scan(db: Session, shipment_id: int, label: str) -> dict:
 
     sl.scanned_quantity = 0
     sl.status = ShipmentLabelStatus.PENDING
+    db.flush()
 
     if was_completed:
         shipment.status = ShipmentStatus.ACTIVE
@@ -188,6 +189,7 @@ def undo_scan(db: Session, shipment_id: int, label: str) -> dict:
         ScanLog.result == ScanResult.SHIPMENT_PRODUCT,
     ).delete()
 
+    rebalance_reference_pending(db, shipment.reference)
     db.commit()
 
     if shipment.status == ShipmentStatus.ACTIVE:
@@ -215,6 +217,7 @@ def get_shipment_manifest(db: Session) -> list[dict]:
         .all()
     )
 
+    from sqlalchemy import func
     manifests = []
     ideal = ideal_fifo_dates(db, shipments)
     for s in shipments:
@@ -240,6 +243,43 @@ def get_shipment_manifest(db: Session) -> list[dict]:
             key = group_key(inv.fifo_date, use_hourly)
             scanned_by_date.setdefault(key, []).append(sl)
 
+        # Stoktaki blokajlı etiketler (henüz okutulmamış ve gizlenmemiş olanlar)
+        ref_blocked_rows = (
+            db.query(InventoryLabel)
+            .filter(
+                func.upper(func.trim(InventoryLabel.reference)) == s.reference.strip().upper(),
+                InventoryLabel.blocked.is_(True),
+                InventoryLabel.hidden.is_(False),
+            )
+            .order_by(InventoryLabel.fifo_date.asc(), InventoryLabel.id.asc())
+            .all()
+        )
+        blocked_consumed_ids: set[int] = set()
+        if ref_blocked_rows:
+            blocked_consumed_ids = {
+                row[0]
+                for row in db.query(ShipmentLabel.inventory_label_id).filter(
+                    ShipmentLabel.inventory_label_id.in_([r.id for r in ref_blocked_rows]),
+                    ShipmentLabel.status.in_([ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL]),
+                ).all()
+            }
+        blocked_labels = [
+            {
+                "label": r.label,
+                "quantity": float(r.quantity),
+                "fifo_time": r.fifo_date.strftime("%d.%m.%Y %H:%M"),
+                "blocked": True,
+            }
+            for r in ref_blocked_rows
+            if r.id not in blocked_consumed_ids and Decimal(r.quantity) > 0
+        ]
+        blocked_by_date: dict = {}
+        for r in ref_blocked_rows:
+            if Decimal(r.quantity) <= 0:
+                continue
+            bkey = group_key(r.fifo_date, use_hourly)
+            blocked_by_date.setdefault(bkey, []).append(r)
+
         items = []
         for key in sorted(quotas):
             quota = float(quotas[key])
@@ -248,6 +288,7 @@ def get_shipment_manifest(db: Session) -> list[dict]:
             # Uyarı yalnızca yeniden hesapta bu tarihin yerini daha eski bir FIFO aldıysa.
             outside = key not in inside and done > 0.001
             label_rows = scanned_by_date.get(key, [])
+            b_rows = blocked_by_date.get(key, [])
             items.append({
                 "label": format_group(key, use_hourly),
                 "reference": s.reference,
@@ -259,11 +300,14 @@ def get_shipment_manifest(db: Session) -> list[dict]:
                 "is_scanned": filled,
                 "outside_fifo": outside,
                 "outside_reason": "window" if outside else None,
+                "has_blocked": len(b_rows) > 0,
+                "blocked_count": len(b_rows),
                 "scanned_labels": [
                     {
                         "label": sl.inventory_label.label,
                         "quantity": float(sl.scanned_quantity or 0),
                         "outside_fifo": outside,
+                        "blocked": bool(getattr(sl.inventory_label, "blocked", False)),
                     }
                     for sl in label_rows
                     if sl.inventory_label
@@ -283,10 +327,140 @@ def get_shipment_manifest(db: Session) -> list[dict]:
             "hourly_fifo": getattr(s, "hourly_fifo", False),
             "status": prog["status"],
             "is_complete": prog["is_complete"],
+            "blocked_label_count": prog.get("blocked_label_count", 0),
+            "unblocked_label_count": prog.get("unblocked_label_count", 0),
+            "blocked_labels": blocked_labels,
             "items": items,
         })
 
     return manifests
+
+
+def export_manifest_excel(db: Session, group_id: int | None = None) -> bytes:
+    """
+    Sevkiyat manifestini ve okutulan tüm etiketleri çok sayfalı Excel (.xlsx) olarak üretir.
+    1. Sayfa: Sevkiyat Özeti (Sevkiyat, Referans, İstenen, Okutulan, Kalan, Eksik Stok, Durum)
+    2. Sayfa: Okutulan Etiketler (Sevkiyat, Referans, Etiket No, Okutulan Adet, FIFO Tarihi, Durum)
+    3. Sayfa: FIFO Tarih Planı (Sevkiyat, Referans, FIFO Tarihi, Beklenen, Okutulan, Durum)
+    """
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+
+    manifests = get_shipment_manifest(db)
+    if group_id is not None:
+        manifests = [m for m in manifests if (m["group_id"] or m["shipment_id"]) == group_id]
+
+    wb = Workbook()
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
+
+    # 1. Sayfa: Sevkiyat Özeti
+    ws_summary = wb.active
+    ws_summary.title = "Sevkiyat Özeti"
+    summary_headers = [
+        "SEVKİYAT",
+        "REFERANS",
+        "İSTENEN MİKTAR",
+        "OKUTULAN MİKTAR",
+        "KALAN MİKTAR",
+        "EKSİK STOK",
+        "İLERLEME (%)",
+        "DURUM",
+    ]
+    ws_summary.append(summary_headers)
+    for cell in ws_summary[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+
+    for m in manifests:
+        prog = get_shipment_progress(db, m["shipment_id"])
+        short_q = prog.get("short_quantity", 0)
+        status_txt = (
+            "Tamamlandı"
+            if m["is_complete"] or m["scanned_quantity"] >= m["requested_quantity"]
+            else ("Eksik Stok" if short_q > 0 else "Devam Ediyor")
+        )
+        ws_summary.append([
+            m.get("group_name") or f"{m['group_id']}. Sevkiyat",
+            m["reference"],
+            m["requested_quantity"],
+            m["scanned_quantity"],
+            m["remaining_quantity"],
+            short_q,
+            m["progress_percent"],
+            status_txt,
+        ])
+
+    # 2. Sayfa: Okutulan Etiketler (Packing List / İrsaliye Detayı)
+    ws_labels = wb.create_sheet(title="Okutulan Etiketler")
+    label_headers = [
+        "SEVKİYAT",
+        "REFERANS",
+        "ETİKET NO",
+        "OKUTULAN MİKTAR",
+        "FIFO TARİHİ",
+        "FIFO DURUMU",
+    ]
+    ws_labels.append(label_headers)
+    for cell in ws_labels[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+
+    for m in manifests:
+        gname = m.get("group_name") or f"{m['group_id']}. Sevkiyat"
+        for item in m["items"]:
+            for read in item.get("scanned_labels", []):
+                ws_labels.append([
+                    gname,
+                    m["reference"],
+                    read["label"],
+                    read["quantity"],
+                    item["fifo_group_date"],
+                    "FIFO Dışı" if read.get("outside_fifo") else "Uygun",
+                ])
+
+    # 3. Sayfa: FIFO Tarih Planı
+    ws_plan = wb.create_sheet(title="FIFO Tarih Planı")
+    plan_headers = [
+        "SEVKİYAT",
+        "REFERANS",
+        "FIFO TARİHİ",
+        "BEKLENEN MİKTAR",
+        "OKUTULAN MİKTAR",
+        "OKUTULAN ETİKETLER",
+        "DURUM",
+    ]
+    ws_plan.append(plan_headers)
+    for cell in ws_plan[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+
+    for m in manifests:
+        gname = m.get("group_name") or f"{m['group_id']}. Sevkiyat"
+        for item in m["items"]:
+            scanned = item.get("scanned_quantity", 0)
+            filled = item.get("is_scanned") or scanned >= item["quantity"]
+            state_txt = "FIFO Dışı" if item.get("outside_fifo") else ("Doldu" if filled else ("Devam" if scanned > 0 else "Açık"))
+            lbl_str = ", ".join(f"{r['label']} ({r['quantity']})" for r in item.get("scanned_labels", []))
+            ws_plan.append([
+                gname,
+                m["reference"],
+                item["fifo_group_date"],
+                item["quantity"],
+                scanned,
+                lbl_str or "-",
+                state_txt,
+            ])
+
+    for ws in (ws_summary, ws_labels, ws_plan):
+        for col in ws.columns:
+            max_len = max((len(str(c.value or "")) for c in col), default=10)
+            ws.column_dimensions[col[0].column_letter].width = min(max(max_len + 3, 12), 45)
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 def list_candidate_labels(db: Session, shipment_id: int, fifo_group: str) -> dict:
@@ -309,10 +483,12 @@ def list_candidate_labels(db: Session, shipment_id: int, fifo_group: str) -> dic
         remaining = Decimal("0")
 
     end = key + (timedelta(minutes=1) if hourly else timedelta(days=1))
+    from sqlalchemy import func
     rows = (
         db.query(InventoryLabel)
         .filter(
-            InventoryLabel.reference == shipment.reference,
+            func.upper(func.trim(InventoryLabel.reference)) == shipment.reference.strip().upper(),
+            InventoryLabel.hidden.is_(False),
             InventoryLabel.fifo_date >= key,
             InventoryLabel.fifo_date < end,
         )
@@ -335,6 +511,7 @@ def list_candidate_labels(db: Session, shipment_id: int, fifo_group: str) -> dic
                 "label": inv.label,
                 "quantity": float(inv.quantity),
                 "fifo_time": inv.fifo_date.strftime("%H:%M"),
+                "blocked": bool(getattr(inv, "blocked", False)),
             })
 
     return {"remaining": float(remaining), "labels": labels}

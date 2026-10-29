@@ -67,6 +67,10 @@ export interface ShipmentProgress {
   is_complete: boolean;
   stock_note?: string | null;
   short_quantity?: number;
+  blocked_label_count?: number;
+  unblocked_label_count?: number;
+  blocked_quantity?: number;
+  unblocked_quantity?: number;
 }
 
 export interface ShipmentGroup {
@@ -80,6 +84,8 @@ export interface ShipmentGroup {
   status: string;
   is_complete: boolean;
   created_at?: string | null;
+  blocked_label_count?: number;
+  unblocked_label_count?: number;
   items: ShipmentProgress[];
 }
 
@@ -96,6 +102,9 @@ export interface ScanResponse {
   fifo_date?: string;
   success: boolean;
   already_scanned: boolean;
+  hint?: string | null;
+  expected_fifo_date?: string | null;
+  suggested_shipment?: string | null;
 }
 
 export interface RecentScan {
@@ -121,6 +130,7 @@ export interface CandidateLabel {
   label: string;
   quantity: number;
   fifo_time: string;
+  blocked?: boolean;
 }
 
 export interface ScannedLabel {
@@ -141,7 +151,28 @@ export interface ShipmentManifestItem {
   is_scanned: boolean;
   outside_fifo?: boolean;
   outside_reason?: 'window' | null;
-  scanned_labels?: { label: string; quantity: number; outside_fifo?: boolean }[];
+  has_blocked?: boolean;
+  blocked_count?: number;
+  scanned_labels?: { label: string; quantity: number; outside_fifo?: boolean; blocked?: boolean }[];
+}
+
+export interface InventoryLabelItem {
+  id: number;
+  label: string;
+  reference: string;
+  quantity: number;
+  fifo_date: string;
+  blocked: boolean;
+  hidden: boolean;
+  scanned: boolean;
+}
+
+export interface InventoryListResponse {
+  total: number;
+  active_count: number;
+  hidden_count: number;
+  blocked_count: number;
+  items: InventoryLabelItem[];
 }
 
 export interface ShipmentManifest {
@@ -157,6 +188,9 @@ export interface ShipmentManifest {
   hourly_fifo: boolean;
   status: string;
   is_complete: boolean;
+  blocked_label_count?: number;
+  unblocked_label_count?: number;
+  blocked_labels?: CandidateLabel[];
   items: ShipmentManifestItem[];
 }
 
@@ -164,10 +198,10 @@ export const api = {
   healthCheck: () =>
     request<{ status: string; service: string; version: string; features: string[] }>('/api/health'),
 
-  importStock: async (file: File) => {
+  importStock: async (file: File, replace: boolean = true) => {
     const form = new FormData();
     form.append('file', file);
-    const res = await fetch(`${API_BASE}/api/inventory/import/stock`, { method: 'POST', body: form });
+    const res = await fetch(`${API_BASE}/api/inventory/import/stock?replace=${replace}`, { method: 'POST', body: form });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: 'Import hatası' }));
       const detail = err.detail || 'Import hatası';
@@ -177,7 +211,30 @@ export const api = {
     return res.json() as Promise<ImportResult>;
   },
 
-  getInventoryStats: () => request<{ total_labels: number; total_references: number }>('/api/inventory/stats'),
+  exportManifestExcelUrl: (groupId?: number | null) =>
+    `${API_BASE}/api/shipment/export${groupId != null ? `?group_id=${groupId}` : ''}`,
+
+  getInventoryStats: () =>
+    request<{ total_labels: number; total_references: number; blocked_labels?: number; unblocked_labels?: number; hidden_labels?: number }>('/api/inventory/stats'),
+
+  getInventoryLabels: (q: string = '', filterMode: string = 'all', limit: number = 10000) =>
+    request<InventoryListResponse>(
+      `/api/inventory/labels?q=${encodeURIComponent(q)}&filter_mode=${encodeURIComponent(filterMode)}&limit=${limit}`
+    ),
+
+  setInventoryLabelHidden: (labelId: number, hidden: boolean) =>
+    request<InventoryLabelItem>(`/api/inventory/labels/${labelId}/hidden`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hidden }),
+    }),
+
+  setInventoryLabelsBulkHidden: (labelIds: number[], hidden: boolean) =>
+    request<{ updated: number; hidden: boolean }>('/api/inventory/labels/bulk-hidden', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label_ids: labelIds, hidden }),
+    }),
 
   getTargets: () => request<ShipmentTarget[]>('/api/shipment/targets'),
 
@@ -230,7 +287,7 @@ export const api = {
       `/api/shipment/${shipmentId}/candidates?fifo_group=${encodeURIComponent(fifoGroup)}`
     ),
 
-  scan: (label: string, shipment_id?: number | null, group_id?: number | null) =>
+  scan: (label: string, shipment_id?: number | null, group_id?: number | null, blocked_only: boolean = false) =>
     request<ScanResponse>('/api/shipment/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -238,6 +295,7 @@ export const api = {
         label,
         shipment_id: shipment_id || null,
         group_id: group_id || null,
+        blocked_only,
       }),
     }),
 

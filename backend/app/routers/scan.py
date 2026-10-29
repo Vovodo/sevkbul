@@ -16,7 +16,7 @@ def scan_label(shipment_id: int, req: ScanRequest, db: Session = Depends(get_db)
         raise HTTPException(status_code=400, detail="Etiket boş olamaz")
 
     try:
-        result = process_scan(db, shipment_id, req.label)
+        result = process_scan(db, shipment_id, req.label, blocked_only=req.blocked_only)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -29,6 +29,13 @@ def scan_label(shipment_id: int, req: ScanRequest, db: Session = Depends(get_db)
         remaining_quantity=result.remaining_quantity,
         progress_percent=result.progress_percent,
         is_complete=result.is_complete,
+        shipment_id=result.shipment_id,
+        fifo_date=result.fifo_date,
+        success=result.success,
+        already_scanned=result.already_scanned,
+        hint=result.hint,
+        expected_fifo_date=result.expected_fifo_date,
+        suggested_shipment=result.suggested_shipment,
     )
 
 

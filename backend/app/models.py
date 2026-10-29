@@ -28,6 +28,8 @@ class ScanResult(str, enum.Enum):
     NOT_FOUND = "ETİKET BULUNAMADI"
     ALREADY_SCANNED = "ZATEN OKUTULDU"
     QUANTITY_EXCEEDED = "MİKTAR AŞILDI"
+    BLOCKED_LABEL = "BLOKAJLI ETİKET"
+    NOT_BLOCKED_LABEL = "BLOKAJLI DEĞİL"
 
 
 class InventoryLabel(Base):
@@ -38,6 +40,8 @@ class InventoryLabel(Base):
     reference = Column(String(200), nullable=False, index=True)
     quantity = Column(Numeric(12, 2), nullable=False)
     fifo_date = Column(DateTime, nullable=False, index=True)
+    blocked = Column(Boolean, default=False, nullable=False, index=True)
+    hidden = Column(Boolean, default=False, nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

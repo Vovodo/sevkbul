@@ -40,8 +40,9 @@ export default function SoundSettings() {
 
   return (
     <div className="sound-settings">
-      <button type="button" className="sound-toggle-btn" onClick={handleOpen} aria-expanded={open}>
-        <Volume2 size={15} /> Ses ayarları
+      <button type="button" className={`op-nav-btn sound-toggle-btn ${open ? 'is-active' : ''}`} onClick={handleOpen} aria-expanded={open}>
+        <Volume2 size={14} />
+        <span>Ses Ayarları</span>
       </button>
 
       {open && (

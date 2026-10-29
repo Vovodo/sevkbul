@@ -1,0 +1,27 @@
+---
+description: Exhaustive E2E browser verification standard for every UI feature, filter, button, geometry, and interaction
+alwaysApply: true
+---
+
+# Exhaustive E2E Browser Verification Standard
+
+Never consider a UI feature verified by merely opening a modal or checking text/row counts alone. Every interactive control added or modified MUST be exercised end-to-end in the browser with both **functional assertions** and **visual/geometric assertions** before finishing the turn.
+
+## Mandatory Verification Checklist
+
+1. **Exercise Every Button & Action State:**
+   - If a dropdown/filter has `Tümünü Seç`, `Arananları Seç`, `Temizle`, search input, and individual checkboxes, click each one in sequence and assert the resulting row count and visible items.
+   - If a feature has a toggle (e.g. `Gizliye Al` ↔ `Aktif Et`, `Sadece Blokajlıları Oku: Kapalı` ↔ `Açık`, sort `asc` ↔ `desc` ↔ `none`), test **both directions** and restore the original live state when done.
+   - If a `Filtreleri Temizle` / reset button exists, verify that it appears when filters are active, resets every filter/sort state when clicked, and restores the full dataset.
+
+2. **Verify Layout Stability, Geometry & Overflow/Clipping (CRITICAL):**
+   - **Modal/Container Size Stability:** Measure `getBoundingClientRect()` of modals and panels BEFORE and AFTER filtering to `0 rows` (e.g. clicking `Temizle` or typing a non-matching query). A modal or table container MUST NOT collapse/shrink vertically when 0 rows match.
+   - **Dropdown & Popover Clipping Check:** Whenever a dropdown, popover, or menu is open (especially when the table has 0 or 1 row), assert that `dropdownRect.bottom <= modalRect.bottom` and `dropdownRect.right <= modalRect.right` so that no part of the menu is cut off by `overflow: hidden` or scroll containers.
+   - Take a screenshot in the edge state (e.g. after `Temizle` while the dropdown is open) and visually inspect it to confirm nothing is clipped or collapsed.
+
+3. **Verify Cross-Component Side Effects:**
+   - When an action in one modal affects another view (e.g. hiding a stock label must recalculate shipments), verify both the modal state AND the main page state, then revert any test toggle on live data so user data remains untouched.
+
+4. **Protect Live Data:**
+   - Never trigger destructive actions (`Sevkiyatı Sıfırla`, `Kaldır` confirmation) on live user data.
+   - Any non-destructive toggle tested on live data MUST be reverted to its exact initial state before unlocking the browser.

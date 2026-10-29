@@ -143,8 +143,7 @@ class TestFifoDatetimeSorting:
         ]
         result = calculate_fifo_groups(items, Decimal("90"))
         labels = [a.label for a in result.allocations]
-        assert "A004" in labels
-        assert "A001" in labels
-        assert "A002" in labels
-        assert "A003" in labels
-        assert labels.index("A004") < labels.index("A001")
+        # 90 talep: 09.07 (30) + 10.07 kontenjanı (60 -> ilk iki etiket A001 ve A002).
+        # A003 kilitlenmez; sonraki sevkiyata kalır.
+        assert labels == ["A004", "A001", "A002"]
+        assert result.pool_quantity == Decimal("90")

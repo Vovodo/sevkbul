@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -21,7 +22,7 @@ from app.services.recalculate_job import get_recalculate_status, start_recalcula
 from app.services.scan_service import process_global_scan
 from app.services.operation_service import (
     reset_active_shipments, delete_shipment_group, get_scanned_labels, undo_scan, get_shipment_manifest,
-    list_candidate_labels,
+    list_candidate_labels, export_manifest_excel,
 
 )
 from app.models import ScanLog, InventoryLabel
@@ -33,9 +34,10 @@ router = APIRouter(prefix="/api/shipment", tags=["operation"])
 _current_active_group_id: int | None = None
 
 
-def get_current_active_group_id(db: Session) -> int | None:
+def get_current_active_group_id(db: Session, groups: list[dict] | None = None) -> int | None:
     global _current_active_group_id
-    groups = get_shipment_groups(db)
+    if groups is None:
+        groups = get_shipment_groups(db)
     if not groups:
         _current_active_group_id = None
         return None
@@ -58,11 +60,10 @@ def set_current_active_group_id(group_id: int | None):
 
 def _broadcast_full_status(db: Session, event: str = "sync", extra: dict | None = None):
     """Tüm bağlı istemcilere güncel sevkiyat durumunu ve seçili hedefi broadcast et."""
-    shipments = get_active_shipments(db)
     groups = get_shipment_groups(db)
-    status_list = [s if isinstance(s, dict) else s.model_dump() if hasattr(s, 'model_dump') else dict(s) for s in shipments]
+    status_list = [item for g in groups for item in g.get("items", [])]
     targets = [ShipmentTargetSchema(id=t.id, reference=t.reference, target_quantity=t.target_quantity).model_dump() for t in list_targets(db)]
-    active_gid = get_current_active_group_id(db)
+    active_gid = get_current_active_group_id(db, groups=groups)
 
     payload = {
         "groups": groups,
@@ -221,6 +222,18 @@ def shipment_manifest(db: Session = Depends(get_db)):
     return get_shipment_manifest(db)
 
 
+@router.get("/export")
+def export_shipment_excel_endpoint(group_id: int | None = None, db: Session = Depends(get_db)):
+    """Sevkiyat özetini, okutulan etiketleri ve FIFO planını Excel (.xlsx) olarak indirir."""
+    content = export_manifest_excel(db, group_id=group_id)
+    filename = f"sevkiyat_raporu_{group_id}.xlsx" if group_id is not None else "sevkiyat_raporu_tumu.xlsx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/scans", response_model=list[ScanLogSchema])
 def recent_scans(limit: int = 30, db: Session = Depends(get_db)):
     logs = db.query(ScanLog).order_by(ScanLog.scanned_at.desc()).limit(limit).all()
@@ -270,7 +283,13 @@ def remove_scan(shipment_id: int, label: str, db: Session = Depends(get_db)):
 def global_scan(req: ScanRequest, db: Session = Depends(get_db)):
     try:
         gid = req.group_id if req.group_id is not None else req.shipment_id
-        r = process_global_scan(db, req.label, target_shipment_id=req.shipment_id, target_group_id=gid)
+        r = process_global_scan(
+            db,
+            req.label,
+            target_shipment_id=req.shipment_id,
+            target_group_id=gid,
+            blocked_only=req.blocked_only,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     scan_result = ScanResponseSchema(
@@ -279,6 +298,8 @@ def global_scan(req: ScanRequest, db: Session = Depends(get_db)):
         progress_percent=r.progress_percent, is_complete=r.is_complete,
         shipment_id=r.shipment_id, fifo_date=r.fifo_date,
         success=r.success, already_scanned=r.already_scanned,
+        hint=r.hint, expected_fifo_date=r.expected_fifo_date,
+        suggested_shipment=r.suggested_shipment,
     )
     _broadcast_full_status(db, "scan", {"scan": scan_result.model_dump()})
     return scan_result

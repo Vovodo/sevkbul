@@ -12,6 +12,7 @@ from app.utils.excel_parser import (
     parse_quantity,
     parse_reference,
     parse_fifo_datetime,
+    parse_blocked,
     format_fifo_datetime,
     REQUIRED_COLUMNS,
 )
@@ -75,6 +76,10 @@ def import_excel(db: Session, file_content: bytes, replace_existing: bool = True
     if replace_existing:
         db.query(InventoryLabel).delete()
         db.commit()
+        existing_by_label: dict[str, InventoryLabel] = {}
+    else:
+        existing_rows = db.query(InventoryLabel).all()
+        existing_by_label = {r.label: r for r in existing_rows}
 
     seen_labels: set[str] = set()
     batch: list[InventoryLabel] = []
@@ -88,6 +93,8 @@ def import_excel(db: Session, file_content: bytes, replace_existing: bool = True
         ref_val = row[mapping["reference"]] if mapping["reference"] < len(row) else None
         qty_val = row[mapping["quantity"]] if mapping["quantity"] < len(row) else None
         date_val = row[mapping["fifo_date"]] if mapping["fifo_date"] < len(row) else None
+        blocked_val = row[mapping["blocked"]] if "blocked" in mapping and mapping["blocked"] < len(row) else None
+        is_blocked = parse_blocked(blocked_val)
 
         label = parse_label(label_val)
         if not label:
@@ -119,12 +126,21 @@ def import_excel(db: Session, file_content: bytes, replace_existing: bool = True
             continue
 
         seen_labels.add(label)
-        batch.append(InventoryLabel(
-            label=label,
-            reference=reference,
-            quantity=quantity,
-            fifo_date=fifo_date,
-        ))
+        if label in existing_by_label:
+            existing_inv = existing_by_label[label]
+            existing_inv.reference = reference
+            existing_inv.quantity = quantity
+            existing_inv.fifo_date = fifo_date
+            existing_inv.blocked = is_blocked
+            result.successful += 1
+        else:
+            batch.append(InventoryLabel(
+                label=label,
+                reference=reference,
+                quantity=quantity,
+                fifo_date=fifo_date,
+                blocked=is_blocked,
+            ))
 
         if len(result.preview_rows) < PREVIEW_LIMIT:
             result.preview_rows.append(ImportPreviewRow(
@@ -144,6 +160,8 @@ def import_excel(db: Session, file_content: bytes, replace_existing: bool = True
         db.bulk_save_objects(batch)
         db.commit()
         result.successful += len(batch)
+    elif not replace_existing and result.successful > 0:
+        db.commit()
 
     wb.close()
     return result

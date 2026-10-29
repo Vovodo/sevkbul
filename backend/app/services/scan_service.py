@@ -10,11 +10,12 @@ from app.models import (
     ShipmentLabelStatus, ScanLog, ScanResult,
 )
 from app.services.lookup_cache import lookup_cache
-from app.services.shipment_service import complete_shipment_if_ready
+from app.services.shipment_service import complete_shipment_if_ready, rebalance_reference_pending
 from app.services.pool_validation import (
-    check_label_in_shipment_pool, PoolCheckResult, log_scan_check,
+    check_label_in_shipment_pool, PoolCheckResult, log_scan_check, _expected_fifo_hint,
 )
-from app.services.fifo_quota import group_key, quota_map, scanned_on_date
+from app.services.fifo_quota import group_key, quota_map, scanned_on_date, shipment_scanned_total
+from app.models import ShipmentDateQuota
 
 
 @dataclass
@@ -31,6 +32,9 @@ class ScanResponse:
     fifo_date: str | None = None
     success: bool = False
     already_scanned: bool = False
+    hint: str | None = None
+    expected_fifo_date: str | None = None
+    suggested_shipment: str | None = None
 
 
 def process_global_scan(
@@ -38,6 +42,7 @@ def process_global_scan(
     scanned_value: str,
     target_shipment_id: int | None = None,
     target_group_id: int | None = None,
+    blocked_only: bool = False,
 ) -> ScanResponse:
     label = scanned_value.strip()
     if not label:
@@ -50,7 +55,11 @@ def process_global_scan(
         raise ValueError("Önce SEVKİYATI BUL ile havuz oluşturun")
 
     check = check_label_in_shipment_pool(
-        db, label, target_shipment_id=target_shipment_id, target_group_id=target_group_id
+        db,
+        label,
+        target_shipment_id=target_shipment_id,
+        target_group_id=target_group_id,
+        blocked_only=blocked_only,
     )
     inv = check.inventory
 
@@ -76,42 +85,86 @@ def process_global_scan(
         sid = check.shipment.id if check.shipment else None
         log_scan_check(label, inv.id, fifo_str, True, "REJECT (ALREADY_SCANNED)")
         _log_scan(db, sid, actual_label, inv.id, ScanResult.ALREADY_SCANNED)
+        other_name = None
+        if check.shipment:
+            gid = check.shipment.group_id or check.shipment.id
+            other_name = check.shipment.group_name or check.shipment.name or f"{gid}. Sevkiyat"
+        dup_hint = f"Bu etiket daha önce '{other_name}' içinde okutulmuş." if other_name else None
         return _build_response(
             ScanResult.ALREADY_SCANNED.value, actual_label, sid, db,
             reference=inv.reference, quantity=float(inv.quantity),
+            fifo_date=inv.fifo_date.strftime("%d.%m.%Y") if inv else None,
             already_scanned=True,
+            hint=dup_hint,
         )
 
     if check.result == PoolCheckResult.QUANTITY_EXCEEDED:
         sid = check.shipment.id if check.shipment else None
         log_scan_check(label, inv.id if inv else None, fifo_str, False, "REJECT (QUANTITY_EXCEEDED)")
         _log_scan(db, sid, actual_label, inv.id if inv else None, ScanResult.QUANTITY_EXCEEDED)
+        exp_date, sug_ship, hint_txt = (
+            _expected_fifo_hint(db, inv, check.shipment) if inv else (None, None, None)
+        )
         return _build_response(
             ScanResult.QUANTITY_EXCEEDED.value, actual_label, sid, db,
             reference=inv.reference if inv else None,
             quantity=float(inv.quantity) if inv else None,
-            fifo_date=fifo_str if inv else None,
+            fifo_date=inv.fifo_date.strftime("%d.%m.%Y") if inv else None,
+            hint=hint_txt,
+            expected_fifo_date=exp_date,
+            suggested_shipment=sug_ship,
+        )
+
+    if check.result == PoolCheckResult.BLOCKED_LABEL:
+        sid = check.shipment.id if check.shipment else None
+        log_scan_check(label, inv.id if inv else None, fifo_str, False, "REJECT (BLOCKED_LABEL)")
+        _log_scan(db, sid, actual_label, inv.id if inv else None, ScanResult.BLOCKED_LABEL)
+        return _build_response(
+            ScanResult.BLOCKED_LABEL.value, actual_label, sid, db,
+            reference=inv.reference if inv else None,
+            quantity=float(inv.quantity) if inv else None,
+            fifo_date=inv.fifo_date.strftime("%d.%m.%Y") if inv else None,
+            hint="Bu etiket stokta BLOKAJLI (DOĞRU). Okutmak için 'Sadece Blokajlıları Oku' butonunu açın.",
+        )
+
+    if check.result == PoolCheckResult.NOT_BLOCKED_LABEL:
+        sid = check.shipment.id if check.shipment else None
+        log_scan_check(label, inv.id if inv else None, fifo_str, False, "REJECT (NOT_BLOCKED_LABEL)")
+        _log_scan(db, sid, actual_label, inv.id if inv else None, ScanResult.NOT_BLOCKED_LABEL)
+        return _build_response(
+            ScanResult.NOT_BLOCKED_LABEL.value, actual_label, sid, db,
+            reference=inv.reference if inv else None,
+            quantity=float(inv.quantity) if inv else None,
+            fifo_date=inv.fifo_date.strftime("%d.%m.%Y") if inv else None,
+            hint="'Sadece Blokajlıları Oku' modu açık — Bu etiket blokajsız (YANLIŞ) olduğu için reddedildi.",
         )
 
     if check.result == PoolCheckResult.IN_POOL and check.shipment:
         log_scan_check(label, inv.id, fifo_str, True, "ACCEPT (IN_POOL)")
-        return _accept_scan(db, check.shipment.id, actual_label, inv, check.shipment_label)
+        return _accept_scan(db, check.shipment.id, actual_label, inv, check.shipment_label, blocked_only=blocked_only)
 
     sid = check.shipment.id if check.shipment else None
     log_scan_check(label, inv.id if inv else None, fifo_str, False, "REJECT (OUTSIDE_POOL)")
     _log_scan(db, sid, actual_label, inv.id if inv else None, ScanResult.OUTSIDE_SHIPMENT)
+    exp_date, sug_ship, hint_txt = (
+        _expected_fifo_hint(db, inv, check.shipment) if inv else (None, None, None)
+    )
     return _build_response(
         ScanResult.OUTSIDE_SHIPMENT.value, actual_label, sid, db,
         reference=inv.reference if inv else None,
         quantity=float(inv.quantity) if inv else None,
+        fifo_date=inv.fifo_date.strftime("%d.%m.%Y") if inv else None,
+        hint=hint_txt,
+        expected_fifo_date=exp_date,
+        suggested_shipment=sug_ship,
     )
 
 
-def process_scan(db: Session, shipment_id: int, scanned_value: str) -> ScanResponse:
-    return process_global_scan(db, scanned_value, target_shipment_id=shipment_id)
+def process_scan(db: Session, shipment_id: int, scanned_value: str, blocked_only: bool = False) -> ScanResponse:
+    return process_global_scan(db, scanned_value, target_shipment_id=shipment_id, blocked_only=blocked_only)
 
 
-def _accept_scan(db, shipment_id: int, label: str, inv, sl) -> ScanResponse:
+def _accept_scan(db, shipment_id: int, label: str, inv, sl, blocked_only: bool = False) -> ScanResponse:
     shipment = db.query(Shipment).filter(Shipment.id == shipment_id).first()
     if not shipment:
         raise ValueError("Sevkiyat bulunamadı")
@@ -144,6 +197,7 @@ def _accept_scan(db, shipment_id: int, label: str, inv, sl) -> ScanResponse:
             fifo_date=inv.fifo_date.strftime("%d.%m.%Y %H:%M") if inv.fifo_date else None,
         )
 
+    need_rebalance = sl is None or Decimal(sl.allocated_quantity) != take
     if sl is None:
         sl = ShipmentLabel(
             shipment_id=shipment_id,
@@ -157,27 +211,59 @@ def _accept_scan(db, shipment_id: int, label: str, inv, sl) -> ScanResponse:
 
     sl.scanned_quantity = take
     sl.status = ShipmentLabelStatus.SCANNED
-    if Decimal(sl.allocated_quantity) < take:
-        sl.allocated_quantity = take
+    sl.allocated_quantity = take
+    db.flush()
 
     # Tahmin listesindeki kilit kalkar; kota satırı durur.
-    db.query(ShipmentLabel).filter(
+    deleted_other = db.query(ShipmentLabel).filter(
         ShipmentLabel.inventory_label_id == inv.id,
         ShipmentLabel.id != sl.id,
         ShipmentLabel.status == ShipmentLabelStatus.PENDING,
-    ).delete(synchronize_session=False)
+    ).delete(synchronize_session="fetch")
+
+    if need_rebalance or deleted_other > 0:
+        rebalance_reference_pending(db, inv.reference)
+
+    log = ScanLog(
+        shipment_id=shipment_id,
+        inventory_label_id=inv.id,
+        scanned_value=label,
+        result=ScanResult.SHIPMENT_PRODUCT,
+        scanned_at=datetime.utcnow(),
+    )
+    db.add(log)
+    db.flush()
+
+    total_scanned_now = shipment_scanned_total(db, shipment)
+    is_complete = False
+    if total_scanned_now >= Decimal(shipment.requested_quantity) and shipment.status == ShipmentStatus.ACTIVE:
+        shipment.status = ShipmentStatus.COMPLETED
+        shipment.completed_at = datetime.utcnow()
+        is_complete = True
+    elif shipment.status == ShipmentStatus.COMPLETED:
+        is_complete = True
 
     db.commit()
 
     lookup_cache.mark_scanned(shipment_id, label)
-    _log_scan(db, shipment_id, label, inv.id, ScanResult.SHIPMENT_PRODUCT)
-
-    is_complete = complete_shipment_if_ready(db, shipment_id)
     fifo_str = inv.fifo_date.strftime("%d.%m.%Y") if inv else None
-    return _build_response(
-        ScanResult.SHIPMENT_PRODUCT.value, label, shipment_id, db, is_complete,
-        reference=inv.reference, quantity=float(inv.quantity),
-        fifo_date=fifo_str, success=True,
+    req_f = float(shipment.requested_quantity)
+    scan_f = float(total_scanned_now)
+    rem_f = max(0.0, req_f - scan_f)
+    pct_f = round(min((scan_f / req_f * 100.0) if req_f > 0 else 0.0, 100.0), 1)
+    return ScanResponse(
+        result=ScanResult.SHIPMENT_PRODUCT.value,
+        label=label,
+        reference=inv.reference,
+        quantity=float(inv.quantity),
+        scanned_quantity=scan_f,
+        remaining_quantity=rem_f,
+        progress_percent=pct_f,
+        is_complete=is_complete,
+        shipment_id=shipment_id,
+        fifo_date=fifo_str,
+        success=True,
+        already_scanned=False,
     )
 
 
@@ -197,6 +283,8 @@ def _build_response(
     result: str, label: str, shipment_id: int | None, db: Session,
     is_complete: bool = False, reference: str | None = None, quantity: float | None = None,
     fifo_date: str | None = None, success: bool = False, already_scanned: bool = False,
+    hint: str | None = None, expected_fifo_date: str | None = None,
+    suggested_shipment: str | None = None,
 ) -> ScanResponse:
     from app.services.shipment_service import get_shipment_progress
     progress = get_shipment_progress(db, shipment_id) if shipment_id else {}
@@ -214,4 +302,7 @@ def _build_response(
         fifo_date=fifo_date,
         success=success or result == ScanResult.SHIPMENT_PRODUCT.value,
         already_scanned=already_scanned or result == ScanResult.ALREADY_SCANNED.value,
+        hint=hint,
+        expected_fifo_date=expected_fifo_date,
+        suggested_shipment=suggested_shipment,
     )

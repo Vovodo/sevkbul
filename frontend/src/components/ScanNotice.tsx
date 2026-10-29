@@ -39,6 +39,20 @@ export function scanPresentation(result: string): {
         hint: 'Stok listesinde bu barkod yok.',
         Icon: SearchX,
       };
+    case 'BLOKAJLI ETİKET':
+      return {
+        tone: 'out',
+        title: 'Blokajlı etiket',
+        hint: 'Bu etiket stokta BLOKAJLI (DOĞRU). Okutmak için Blokaj modunu açın.',
+        Icon: Ban,
+      };
+    case 'BLOKAJLI DEĞİL':
+      return {
+        tone: 'over',
+        title: 'Blokajlı değil',
+        hint: 'Sadece Blokajlıları Oku modu açık — Bu etiket blokajsız (YANLIŞ).',
+        Icon: CircleX,
+      };
     default:
       return {
         tone: 'out',
@@ -104,12 +118,14 @@ export function ScanNotice({
       <div className="scan-notice-copy">
         <div className="scan-notice-kicker">{scan.result}</div>
         <div className="scan-notice-title">{view.title}</div>
-        <div className="scan-notice-hint">{view.hint}</div>
+        <div className="scan-notice-hint">{scan.hint || view.hint}</div>
         <div className="scan-notice-meta">
           <span><em>Etiket</em> {scan.label}</span>
           {scan.reference && <span><em>Referans</em> {scan.reference}</span>}
           {scan.quantity != null && <span><em>Miktar</em> {scan.quantity}</span>}
           {scan.fifo_date && <span><em>FIFO</em> {scan.fifo_date}</span>}
+          {scan.expected_fifo_date && <span><em>Beklenen FIFO</em> {scan.expected_fifo_date}</span>}
+          {scan.suggested_shipment && <span><em>Uygun Sevkiyat</em> {scan.suggested_shipment}</span>}
         </div>
       </div>
     </div>

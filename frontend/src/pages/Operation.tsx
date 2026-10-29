@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Check, Crosshair, Maximize2, Radio, RefreshCw, Smartphone, X } from 'lucide-react';
+import { Check, ClipboardList, Copy, Crosshair, Layers, Lock, LockOpen, Maximize2, PackageSearch, Radio, RefreshCw, RotateCcw, SlidersHorizontal, Smartphone, TriangleAlert, X } from 'lucide-react';
 import { api, ShipmentGroup, ShipmentProgress, ScanResponse, ShipmentTarget, RecentScan, RecalculateStatus } from '../api';
 import { playScanSound, initAudio, ScanResultType } from '../audio';
 import SoundSettings from '../components/SoundSettings';
 import ManifestModal from '../components/ManifestModal';
+import StockModal from '../components/StockModal';
 import MobileDownloadModal from '../components/MobileDownloadModal';
 import ShipmentCard from '../components/ShipmentCard';
 import Logo from '../components/Logo';
@@ -17,6 +18,7 @@ export default function OperationPage() {
   const [phase, setPhase] = useState<Phase>('setup');
   const [showSetup, setShowSetup] = useState(true);
   const [showManifestModal, setShowManifestModal] = useState(false);
+  const [showStockModal, setShowStockModal] = useState(false);
   const [showDownloadModal, setShowDownloadModal] = useState(false);
   const [stockLoaded, setStockLoaded] = useState(false);
   const [stockCount, setStockCount] = useState(0);
@@ -44,6 +46,8 @@ export default function OperationPage() {
   const [hourlyFifo, setHourlyFifo] = useState<boolean>(() => {
     return localStorage.getItem('hourlyFifo') === 'true';
   });
+  const [blockedOnly, setBlockedOnly] = useState<boolean>(false);
+  const [copiedShortage, setCopiedShortage] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const lastPresented = useRef<{ key: string; at: number } | null>(null);
@@ -296,13 +300,20 @@ export default function OperationPage() {
   const live = useLiveUpdates(handleWsMessage);
   liveRef.current = live;
 
-  const handleStockUpload = async (file: File) => {
-    setLoading('stock');
+  const handleStockUpload = async (file: File, replace: boolean = true) => {
+    setLoading(replace ? 'stock' : 'stock-append');
     setError('');
+    setDropNote('');
     try {
-      const r = await api.importStock(file);
+      const r = await api.importStock(file, replace);
       setStockLoaded(true);
       setStockCount(r.successful);
+      if (!replace && groups.length > 0) {
+        setDropNote(`Stok güncellendi (${r.successful.toLocaleString('tr-TR')} etiket). Sevkiyatlar yeni stokla yeniden hesaplanıyor...`);
+        await triggerRecalculateQuiet();
+      } else if (!replace) {
+        setDropNote(`Stok güncellendi (${r.successful.toLocaleString('tr-TR')} etiket).`);
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Stok yüklenemedi');
     } finally {
@@ -421,9 +432,8 @@ export default function OperationPage() {
     }
   };
 
-  const handleRecalculate = async () => {
-    if (groups.length === 0 || recalc?.phase === 'running') return;
-    if (!window.confirm('Güncel stok ve mevcut okutmalara göre FIFO tarihleri yeniden hesaplanacak. Okutmalar silinmez.')) return;
+  const triggerRecalculateQuiet = async () => {
+    if (recalc?.phase === 'running') return;
     setError('');
     recalcJob.current = null;
     setRecalc({
@@ -496,6 +506,12 @@ export default function OperationPage() {
         updated: 0,
       });
     }
+  };
+
+  const handleRecalculate = async () => {
+    if (groups.length === 0 || recalc?.phase === 'running') return;
+    if (!window.confirm('Güncel stok ve mevcut okutmalara göre FIFO tarihleri yeniden hesaplanacak. Okutmalar silinmez.')) return;
+    await triggerRecalculateQuiet();
   };
 
   const handleFind = async () => {
@@ -618,9 +634,45 @@ export default function OperationPage() {
     const trimmed = label.trim();
     if (!trimmed) return;
 
+    // Barkod okuyucu arka arkaya hızlı okuttuğunda kutu anında temizlensin
+    setScanValue('');
+    focusScanInput();
+
     try {
-      const result = await api.scan(trimmed, null, selectedGroupId);
+      const result = await api.scan(trimmed, null, selectedGroupId, blockedOnly);
       presentScan(result);
+      // WebSocket paketi gelene kadar seçili sevkiyat ilerlemesini 0ms'de anında güncelle
+      if (result.success && result.shipment_id != null && result.scanned_quantity != null) {
+        setGroups(prev => prev.map(g => {
+          if (!g.items.some(it => it.shipment_id === result.shipment_id)) return g;
+          const items = g.items.map(it =>
+            it.shipment_id === result.shipment_id
+              ? {
+                  ...it,
+                  scanned_quantity: result.scanned_quantity ?? it.scanned_quantity,
+                  remaining_quantity: result.remaining_quantity ?? it.remaining_quantity,
+                  progress_percent: result.progress_percent ?? it.progress_percent,
+                  is_complete: result.is_complete ?? it.is_complete,
+                  status: result.is_complete ? 'completed' : it.status,
+                }
+              : it
+          );
+          const totReq = items.reduce((s, i) => s + i.requested_quantity, 0);
+          const totScan = items.reduce((s, i) => s + i.scanned_quantity, 0);
+          const totRem = Math.max(0, totReq - totScan);
+          const pct = totReq > 0 ? Math.min(100, Math.round((totScan / totReq) * 1000) / 10) : 0;
+          const allDone = items.length > 0 && items.every(i => i.is_complete);
+          return {
+            ...g,
+            items,
+            scanned_quantity: totScan,
+            remaining_quantity: totRem,
+            progress_percent: pct,
+            is_complete: allDone,
+            status: allDone ? 'completed' : 'active',
+          };
+        }));
+      }
       if (!liveRef.current) {
         const updated = await api.getGroups();
         setGroups(updated);
@@ -628,78 +680,104 @@ export default function OperationPage() {
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Okutma hatası');
     } finally {
-      setScanValue('');
       focusScanInput();
     }
-  }, [focusScanInput, presentScan, selectedGroupId]);
+  }, [focusScanInput, presentScan, selectedGroupId, blockedOnly]);
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      handleScan(scanValue);
+      void handleScan(e.currentTarget.value || scanValue);
     }
   };
 
   return (
     <div className="op-page">
       <header className="op-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+        <div className="op-header-brand">
           <Logo size="md" variant="full" />
-          {stockLoaded && <span className="op-badge ok">{stockCount.toLocaleString('tr-TR')} etiket yüklü</span>}
-          <span className={`op-live ${live ? 'is-on' : 'is-off'}`}>
-            <Radio size={13} />
-            {live ? 'Canlı' : 'Bağlantı yok'}
-          </span>
+          <div className="op-header-status">
+            {stockLoaded && <span className="op-badge ok">{stockCount.toLocaleString('tr-TR')} etiket yüklü</span>}
+            <span className={`op-live ${live ? 'is-on' : 'is-off'}`}>
+              <Radio size={13} />
+              {live ? 'Canlı' : 'Bağlantı yok'}
+            </span>
+          </div>
         </div>
-        <div className="op-header-actions">
 
-          {showSetup && (
-            <button
-              type="button"
-              className="op-btn secondary compact"
-              onClick={() => setShowSetup(false)}
-            >
-              Geri
-            </button>
-          )}
-          {groups.length > 0 && (
-            <button
-              type="button"
-              className="op-btn primary compact"
-              onClick={() => setShowManifestModal(true)}
-              style={{ fontWeight: 700 }}
-            >
-              FIFO listesi
-            </button>
-          )}
-          {isScanning && (
-            <>
-              <button type="button" className="op-btn secondary compact" onClick={() => setShowSetup(v => !v)}>
-                {showSetup ? 'Formu Gizle' : 'Formu Göster'}
-              </button>
+        <nav className="op-header-actions" aria-label="Üst araç çubuğu">
+          <div className="op-header-group">
+            {groups.length > 0 && (
               <button
                 type="button"
-                className="op-btn danger compact"
+                className="op-nav-btn is-primary"
+                onClick={() => setShowManifestModal(true)}
+              >
+                <ClipboardList size={14} />
+                <span>FIFO Listesi</span>
+              </button>
+            )}
+            {stockLoaded && (
+              <button
+                type="button"
+                className="op-nav-btn"
+                onClick={() => setShowStockModal(true)}
+              >
+                <PackageSearch size={14} />
+                <span>Stok Listesi</span>
+              </button>
+            )}
+            {isScanning && (
+              <button
+                type="button"
+                className={`op-nav-btn ${showSetup ? 'is-active' : ''}`}
+                onClick={() => setShowSetup(v => !v)}
+              >
+                <SlidersHorizontal size={14} />
+                <span>{showSetup ? 'Formu Gizle' : 'Formu Göster'}</span>
+              </button>
+            )}
+          </div>
+
+          <span className="op-header-divider" aria-hidden />
+
+          <div className="op-header-group">
+            <button
+              type="button"
+              className="op-nav-btn"
+              onClick={() => setShowDownloadModal(true)}
+            >
+              <Smartphone size={14} />
+              <span>Mobil / QR</span>
+            </button>
+            <SoundSettings />
+          </div>
+
+          {isScanning && (
+            <>
+              <span className="op-header-divider" aria-hidden />
+              <button
+                type="button"
+                className="op-nav-btn is-danger"
                 onClick={handleReset}
                 disabled={loading === 'reset'}
               >
-                {loading === 'reset' ? 'Sıfırlanıyor...' : 'Sevkiyatı Sıfırla'}
+                <RotateCcw size={14} />
+                <span>{loading === 'reset' ? 'Sıfırlanıyor...' : 'Sevkiyatı Sıfırla'}</span>
               </button>
             </>
           )}
-          <button
-            type="button"
-            className="op-btn secondary compact mobile-download-header-btn"
-            onClick={() => setShowDownloadModal(true)}
-            style={{ fontWeight: 700, borderColor: '#3b82f6', color: '#93c5fd' }}
-          >
-            <Smartphone size={15} /> Mobil İndir / QR
-          </button>
-          <SoundSettings />
-        </div>
+        </nav>
       </header>
 
       <ManifestModal isOpen={showManifestModal} onClose={() => setShowManifestModal(false)} />
+      <StockModal
+        isOpen={showStockModal}
+        onClose={() => setShowStockModal(false)}
+        onStockChanged={() => {
+          api.getGroups().then(setGroups).catch(() => {});
+        }}
+      />
       <MobileDownloadModal isOpen={showDownloadModal} onClose={() => setShowDownloadModal(false)} />
 
       {error && <div className="op-alert error">{error}</div>}
@@ -723,13 +801,30 @@ export default function OperationPage() {
           <div className="op-row">
             <div className="op-field">
               <label>STOK EXCELİ</label>
-              <label className="op-file-btn">
-                {loading === 'stock' ? 'Yükleniyor...' : stockLoaded ? <><Check size={15} /> Yüklendi — Değiştir</> : 'Dosya Seç'}
-                <input type="file" accept=".xlsx,.xls" hidden onChange={e => {
-                  const f = e.target.files?.[0];
-                  if (f) handleStockUpload(f);
-                }} />
-              </label>
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                <label className="op-file-btn" style={{ flex: 1 }}>
+                  {loading === 'stock' ? 'Yükleniyor...' : stockLoaded ? <><Check size={15} /> Yüklendi — Sıfırdan Değiştir</> : 'Dosya Seç'}
+                  <input type="file" accept=".xlsx,.xls" hidden onChange={e => {
+                    const f = e.target.files?.[0];
+                    e.target.value = '';
+                    if (f) handleStockUpload(f, true);
+                  }} />
+                </label>
+                {stockLoaded && (
+                  <label
+                    className="op-file-btn"
+                    style={{ flex: 1, borderColor: '#3b82f6', color: '#93c5fd', background: 'rgba(59, 130, 246, 0.1)' }}
+                    title="Mevcut sevkiyatları ve okutmaları bozmadan yeni stok etiketlerini ekler / günceller"
+                  >
+                    {loading === 'stock-append' ? 'Ekleniyor...' : '+ Stok Güncelle / Ekle'}
+                    <input type="file" accept=".xlsx,.xls" hidden onChange={e => {
+                      const f = e.target.files?.[0];
+                      e.target.value = '';
+                      if (f) handleStockUpload(f, false);
+                    }} />
+                  </label>
+                )}
+              </div>
             </div>
             <div className="op-field">
               <label>SEVKİYAT EXCELİ</label>
@@ -866,9 +961,58 @@ export default function OperationPage() {
         </section>
       )}
 
-      {groups.length > 0 && (
+      {groups.length > 0 && (() => {
+        const allItems = groups.flatMap(g => g.items);
+        const totReq = groups.reduce((s, g) => s + g.requested_quantity, 0);
+        const totScan = groups.reduce((s, g) => s + g.scanned_quantity, 0);
+        const totPct = totReq > 0 ? Math.min(100, Math.round((totScan / totReq) * 1000) / 10) : 0;
+        const doneRefs = allItems.filter(it => it.is_complete || it.scanned_quantity >= it.requested_quantity).length;
+        const shortRefs = allItems.filter(it => Number(it.short_quantity || 0) > 0).length;
+        const totShortQty = allItems.reduce((s, it) => s + Number(it.short_quantity || 0), 0);
+        const blockedRefs = allItems.filter(it => Number(it.blocked_label_count || 0) > 0).length;
+        const totBlockedLbls = allItems.reduce((s, it) => s + Number(it.blocked_label_count || 0), 0);
+        const fmt = (n: number) => new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 2 }).format(n);
+
+        const copyShortageToClipboard = async () => {
+          if (shortRefs <= 0) return;
+          const lines: string[] = [
+            `EKSİK STOK LİSTESİ (${shortRefs} Referans - Toplam ${fmt(totShortQty)} Adet Eksik)`,
+            '------------------------------------------------------------',
+          ];
+          groups.forEach((g, idx) => {
+            const gTitle = g.name || `${idx + 1}. Sevkiyat`;
+            const shorts = g.items.filter(it => Number(it.short_quantity || 0) > 0);
+            if (shorts.length === 0) return;
+            shorts.forEach(it => {
+              const sq = Number(it.short_quantity || 0);
+              lines.push(`${gTitle}\t${it.reference}\tEksik: ${fmt(sq)} adet (İstenen: ${fmt(it.requested_quantity)})`);
+            });
+          });
+          const text = lines.join('\n');
+          (window as unknown as { __lastCopiedShortageText?: string }).__lastCopiedShortageText = text;
+          try {
+            if (navigator.clipboard?.writeText) {
+              await navigator.clipboard.writeText(text);
+            } else {
+              throw new Error('Clipboard API unavailable');
+            }
+          } catch {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+          }
+          setCopiedShortage(true);
+          window.setTimeout(() => setCopiedShortage(false), 2200);
+        };
+
+        return (
         <section className="op-section">
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.65rem' }}>
             <h2 style={{ margin: 0 }}>Sevkiyatlar <span className="op-count">{groups.length}</span></h2>
             <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
               <button
@@ -889,12 +1033,56 @@ export default function OperationPage() {
               </button>
             </div>
           </div>
+
+          <div className="op-shipments-overview">
+            <div className="op-ov-pill is-progress">
+              <Layers size={13} />
+              <span>Toplam: <strong>{fmt(totScan)} / {fmt(totReq)}</strong> adet (%{totPct})</span>
+            </div>
+            <div className="op-ov-pill is-refs">
+              <Check size={13} />
+              <span>Referans: <strong>{doneRefs} / {allItems.length}</strong> tamamlandı</span>
+            </div>
+            {shortRefs > 0 ? (
+              <button
+                type="button"
+                className={`op-ov-pill is-short is-clickable ${copiedShortage ? 'is-copied' : ''}`}
+                onClick={() => void copyShortageToClipboard()}
+                title="Tıkla ve eksik stok listesini panoya kopyala"
+              >
+                {copiedShortage ? <Check size={13} /> : <TriangleAlert size={13} />}
+                <span>
+                  {copiedShortage ? (
+                    <strong>Panoya Kopyalandı! ({shortRefs} Ref)</strong>
+                  ) : (
+                    <>Eksik Stok: <strong>{shortRefs} Ref ({fmt(totShortQty)} adet)</strong></>
+                  )}
+                </span>
+                {!copiedShortage && <Copy size={12} className="op-ov-copy-icon" />}
+              </button>
+            ) : (
+              <div className="op-ov-pill is-ok">
+                <Check size={13} />
+                <span>Eksik Stok: <strong>Yok</strong></span>
+              </div>
+            )}
+            <div className={`op-ov-pill ${totBlockedLbls > 0 ? 'is-blocked' : 'is-neutral'}`}>
+              <Lock size={13} />
+              <span>
+                {totBlockedLbls > 0
+                  ? <>Blokaj: <strong>{blockedRefs} Ref • {totBlockedLbls} Etiket</strong></>
+                  : <>Blokaj: <strong>Yok</strong></>}
+              </span>
+            </div>
+          </div>
+
           <div className="op-shipment-table">
             {groups.map((g, idx) => (
               <ShipmentCard
                 key={g.group_id}
                 group={g}
                 index={idx + 1}
+                totalGroups={groups.length}
                 isSelected={selectedGroupId === g.group_id}
                 onSelect={() => {
                   handleSelectGroup(g.group_id);
@@ -907,8 +1095,9 @@ export default function OperationPage() {
                 dropTarget={dropGroupId === g.group_id && dragGroupId !== g.group_id}
                 onDragStart={setDragGroupId}
                 onDragOver={setDropGroupId}
-                onDrop={targetId => {
-                  if (dragGroupId != null) void reorderGroups(dragGroupId, targetId);
+                onDrop={(targetId, srcId) => {
+                  const source = srcId ?? dragGroupId;
+                  if (source != null) void reorderGroups(source, targetId);
                   setDragGroupId(null);
                   setDropGroupId(null);
                 }}
@@ -916,11 +1105,14 @@ export default function OperationPage() {
                   setDragGroupId(null);
                   setDropGroupId(null);
                 }}
+                onMoveUp={idx > 0 ? () => void reorderGroups(g.group_id, groups[idx - 1].group_id) : undefined}
+                onMoveDown={idx < groups.length - 1 ? () => void reorderGroups(g.group_id, groups[idx + 1].group_id) : undefined}
               />
             ))}
           </div>
         </section>
-      )}
+        );
+      })()}
       </div>
 
       {isScanning && (
@@ -972,8 +1164,30 @@ export default function OperationPage() {
             );
           })()}
 
-          <h2>Etiket okut</h2>
-          <div className="op-scan-area">
+          <div className="op-scan-head">
+            <h2>Etiket okut</h2>
+            <button
+              type="button"
+              className={`op-blokaj-mode-btn ${blockedOnly ? 'is-on' : ''}`}
+              onClick={() => {
+                setBlockedOnly(v => !v);
+                focusScanInput();
+              }}
+              title={blockedOnly
+                ? 'Açık: Sadece seçili sevkiyattaki BLOKAJLI (DOĞRU) etiketleri okur'
+                : 'Kapalı: Normal FIFO etiketlerini okur (Blokajlıları reddeder)'}
+            >
+              {blockedOnly ? <Lock size={13} /> : <LockOpen size={13} />}
+              <span>{blockedOnly ? 'Sadece Blokajlıları Oku: Açık' : 'Sadece Blokajlıları Oku: Kapalı'}</span>
+            </button>
+          </div>
+          <form
+            className="op-scan-area"
+            onSubmit={e => {
+              e.preventDefault();
+              void handleScan(inputRef.current?.value || scanValue);
+            }}
+          >
             <input
               ref={inputRef}
               className="op-scan-input"
@@ -983,8 +1197,8 @@ export default function OperationPage() {
               placeholder="Etiket okutun veya yazın..."
               autoFocus
             />
-            <button className="op-btn primary" onClick={() => handleScan(scanValue)}>OKUT</button>
-          </div>
+            <button type="submit" className="op-btn primary">OKUT</button>
+          </form>
 
           <div className="op-result-wrap">
             <button

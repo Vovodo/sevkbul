@@ -15,6 +15,22 @@ from app.ws_manager import ws_manager
 import asyncio
 
 
+def _ensure_inventory_blocked() -> None:
+    """Eski veritabanında blokaj ve gizlilik sütunu yoksa ekler."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(database.engine)
+    if "inventory_labels" not in inspector.get_table_names():
+        return
+    columns = {col["name"] for col in inspector.get_columns("inventory_labels")}
+    if "blocked" not in columns:
+        with database.engine.begin() as conn:
+            conn.execute(text("ALTER TABLE inventory_labels ADD COLUMN blocked BOOLEAN NOT NULL DEFAULT 0"))
+    if "hidden" not in columns:
+        with database.engine.begin() as conn:
+            conn.execute(text("ALTER TABLE inventory_labels ADD COLUMN hidden BOOLEAN NOT NULL DEFAULT 0"))
+
+
 def _ensure_shipment_sort_order() -> None:
     """Eski veritabanında liste sırası yoksa ekler ve mevcut sevkiyatları korur."""
     from sqlalchemy import inspect, text
@@ -84,6 +100,7 @@ async def lifespan(app: FastAPI):
     _ensure_target_source_name()
     _ensure_shipment_stock_note()
     _ensure_shipment_sort_order()
+    _ensure_inventory_blocked()
     db = database.SessionLocal()
     try:
         backfill_missing_quotas(db)
@@ -91,6 +108,12 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
     yield
+    for ws in list(ws_manager.active_connections):
+        try:
+            await ws.close()
+        except Exception:
+            pass
+    ws_manager.active_connections.clear()
 
 
 app = FastAPI(

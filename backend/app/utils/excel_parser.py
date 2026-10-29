@@ -96,6 +96,18 @@ def find_column_mapping(headers: list[Any]) -> dict[str, int]:
                 mapping["fifo_date"] = idx
                 break
 
+    # 5. Blokaj column matching (opsiyonel)
+    blokaj_aliases = ["BLOKAJ", "BLOKAJLI", "BLOK", "BLOCKED", "BLOCK"]
+    for alias in blokaj_aliases:
+        if alias in normalized_headers:
+            mapping["blocked"] = normalized_headers[alias]
+            break
+    if "blocked" not in mapping:
+        for norm_h, idx in normalized_headers.items():
+            if "BLOKAJ" in norm_h:
+                mapping["blocked"] = idx
+                break
+
     return mapping
 
 
@@ -259,3 +271,19 @@ def parse_reference(value: Any) -> str | None:
     else:
         text = str(value).strip()
     return text if text else None
+
+
+def parse_blocked(value: Any) -> bool:
+    """
+    BLOKAJ sütununu boolean olarak parse eder.
+    DOĞRU / TRUE / 1 / EVET -> True (Blokajlı)
+    YANLIŞ / FALSE / 0 / HAYIR / boş -> False (Blokajsız)
+    """
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(int(value) != 0)
+    norm = normalize_header(str(value))
+    return norm in {"DOGRU", "TRUE", "1", "EVET", "BLOKAJLI", "BLOKAJ", "YES"}

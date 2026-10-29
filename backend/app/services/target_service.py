@@ -36,6 +36,19 @@ def add_target(
     if target_quantity <= 0:
         raise ValueError("Miktar geçersiz")
 
+    existing = (
+        db.query(ShipmentTarget)
+        .filter(func.upper(func.trim(ShipmentTarget.reference)) == ref.upper())
+        .first()
+    )
+    if existing:
+        existing.target_quantity = Decimal(existing.target_quantity) + Decimal(target_quantity)
+        if source_name and not existing.source_name:
+            existing.source_name = source_name
+        db.commit()
+        db.refresh(existing)
+        return TargetRow(id=existing.id, reference=existing.reference, target_quantity=float(existing.target_quantity))
+
     row = ShipmentTarget(reference=ref, target_quantity=target_quantity, source_name=source_name)
     db.add(row)
     db.commit()
@@ -93,10 +106,21 @@ def find_shipments(db: Session, hourly_fifo: bool = False) -> list[dict]:
     results = []
     errors = []
 
+    merged_targets: list[tuple[str, Decimal]] = []
+    seen_refs: dict[str, int] = {}
     for t in targets:
+        rkey = t.reference.strip().upper()
+        if rkey in seen_refs:
+            idx = seen_refs[rkey]
+            merged_targets[idx] = (merged_targets[idx][0], merged_targets[idx][1] + Decimal(t.target_quantity))
+        else:
+            seen_refs[rkey] = len(merged_targets)
+            merged_targets.append((t.reference.strip(), Decimal(t.target_quantity)))
+
+    for ref_val, qty_val in merged_targets:
         try:
             created = create_shipment_from_reference(
-                db, t.reference, t.target_quantity, hourly_fifo=hourly_fifo,
+                db, ref_val, qty_val, hourly_fifo=hourly_fifo,
                 group_id=next_group_id, group_name=group_name
             )
             results.append({
@@ -109,7 +133,7 @@ def find_shipments(db: Session, hourly_fifo: bool = False) -> list[dict]:
                 "insufficient_stock": created.insufficient_stock,
             })
         except ValueError as e:
-            errors.append({"reference": t.reference, "error": str(e)})
+            errors.append({"reference": ref_val, "error": str(e)})
 
     if not results and errors:
         raise ValueError(errors[0]["error"])

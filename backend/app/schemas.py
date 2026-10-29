@@ -62,6 +62,10 @@ class ShipmentProgressSchema(BaseModel):
     is_complete: bool
     stock_note: str | None = None
     short_quantity: float = 0
+    blocked_label_count: int = 0
+    unblocked_label_count: int = 0
+    blocked_quantity: float = 0
+    unblocked_quantity: float = 0
 
 
 class ShipmentGroupSchema(BaseModel):
@@ -75,6 +79,8 @@ class ShipmentGroupSchema(BaseModel):
     status: str = "active"
     is_complete: bool = False
     created_at: str | None = None
+    blocked_label_count: int = 0
+    unblocked_label_count: int = 0
     items: list[ShipmentProgressSchema] = []
 
 
@@ -82,6 +88,7 @@ class ScanRequest(BaseModel):
     label: str
     shipment_id: int | None = None
     group_id: int | None = None
+    blocked_only: bool = False
 
 
 class ScanResponseSchema(BaseModel):
@@ -97,6 +104,9 @@ class ScanResponseSchema(BaseModel):
     fifo_date: str | None = None
     success: bool = False
     already_scanned: bool = False
+    hint: str | None = None
+    expected_fifo_date: str | None = None
+    suggested_shipment: str | None = None
 
 
 class ShipmentTargetSchema(BaseModel):
@@ -148,6 +158,28 @@ class DashboardSchema(BaseModel):
 class InventoryStatsSchema(BaseModel):
     total_labels: int
     total_references: int
+    blocked_labels: int = 0
+    unblocked_labels: int = 0
+    hidden_labels: int = 0
+
+
+class InventoryItemSchema(BaseModel):
+    id: int
+    label: str
+    reference: str
+    quantity: float
+    fifo_date: str
+    blocked: bool = False
+    hidden: bool = False
+    scanned: bool = False
+
+
+class InventoryListResponseSchema(BaseModel):
+    total: int
+    active_count: int
+    hidden_count: int
+    blocked_count: int
+    items: list[InventoryItemSchema]
 
 
 class ShipmentLabelSchema(BaseModel):
@@ -189,6 +221,7 @@ class CandidateLabelSchema(BaseModel):
     label: str
     quantity: float
     fifo_time: str
+    blocked: bool = False
 
 
 class CandidateListSchema(BaseModel):
@@ -200,6 +233,7 @@ class ManifestScannedLabelSchema(BaseModel):
     label: str
     quantity: float
     outside_fifo: bool = False
+    blocked: bool = False
 
 
 class ShipmentManifestItemSchema(BaseModel):
@@ -213,6 +247,8 @@ class ShipmentManifestItemSchema(BaseModel):
     is_scanned: bool
     outside_fifo: bool = False
     outside_reason: str | None = None
+    has_blocked: bool = False
+    blocked_count: int = 0
     scanned_labels: list[ManifestScannedLabelSchema] = []
 
 
@@ -229,5 +265,8 @@ class ShipmentManifestSchema(BaseModel):
     hourly_fifo: bool
     status: str
     is_complete: bool
+    blocked_label_count: int = 0
+    unblocked_label_count: int = 0
+    blocked_labels: list[CandidateLabelSchema] = []
     items: list[ShipmentManifestItemSchema]
 

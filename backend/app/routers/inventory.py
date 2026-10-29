@@ -2,12 +2,16 @@ from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.schemas import ImportResultSchema, RowErrorSchema, InventoryStatsSchema, ImportPreviewRowSchema
+from app.schemas import (
+    ImportResultSchema, RowErrorSchema, InventoryStatsSchema, ImportPreviewRowSchema,
+    InventoryItemSchema, InventoryListResponseSchema,
+)
 from app.services.excel_import import import_excel
 from app.services.lookup_cache import lookup_cache
-from app.models import InventoryLabel
+from app.models import InventoryLabel, Shipment, ShipmentLabel, ShipmentLabelStatus, ShipmentStatus
 from app.ws_manager import ws_manager
-from sqlalchemy import func
+from sqlalchemy import func, or_
+from pydantic import BaseModel as _BaseModel
 
 router = APIRouter(prefix="/api/inventory", tags=["inventory"])
 
@@ -47,7 +51,7 @@ async def upload_stock_excel(
 
     return ImportResultSchema(
         total_rows=result.total_rows,
-        successful=result.successful,
+        successful=total if not replace else result.successful,
         error_count=len(result.errors),
         duplicate_count=len(result.duplicate_labels),
         invalid_label_count=result.invalid_label_count,
@@ -83,7 +87,217 @@ async def upload_excel(
 def get_inventory_stats(db: Session = Depends(get_db)):
     total = db.query(func.count(InventoryLabel.id)).scalar() or 0
     refs = db.query(func.count(func.distinct(InventoryLabel.reference))).scalar() or 0
-    return InventoryStatsSchema(total_labels=total, total_references=refs)
+    blocked = db.query(func.count(InventoryLabel.id)).filter(InventoryLabel.blocked.is_(True)).scalar() or 0
+    hidden = db.query(func.count(InventoryLabel.id)).filter(InventoryLabel.hidden.is_(True)).scalar() or 0
+    return InventoryStatsSchema(
+        total_labels=total,
+        total_references=refs,
+        blocked_labels=blocked,
+        unblocked_labels=max(0, total - blocked),
+        hidden_labels=hidden,
+    )
+
+
+class _ToggleHiddenRequest(_BaseModel):
+    hidden: bool
+
+
+class _BulkToggleHiddenRequest(_BaseModel):
+    label_ids: list[int]
+    hidden: bool
+
+
+@router.get("/labels", response_model=InventoryListResponseSchema)
+def list_inventory_labels(
+    q: str = "",
+    filter_mode: str = "all",
+    limit: int = 10000,
+    db: Session = Depends(get_db),
+):
+    """
+    Stok Excelindeki etiketleri listeler (salt-okunur içerik + gizle/göster durumu).
+    filter_mode: all | active | hidden | blocked
+    """
+    total = db.query(func.count(InventoryLabel.id)).scalar() or 0
+    hidden_count = db.query(func.count(InventoryLabel.id)).filter(InventoryLabel.hidden.is_(True)).scalar() or 0
+    blocked_count = db.query(func.count(InventoryLabel.id)).filter(InventoryLabel.blocked.is_(True)).scalar() or 0
+    active_count = max(0, total - hidden_count)
+
+    query = db.query(InventoryLabel)
+    search = q.strip()
+    if search:
+        like_pat = f"%{search}%"
+        query = query.filter(
+            or_(
+                InventoryLabel.label.ilike(like_pat),
+                InventoryLabel.reference.ilike(like_pat),
+            )
+        )
+
+    if filter_mode == "active":
+        query = query.filter(InventoryLabel.hidden.is_(False))
+    elif filter_mode == "hidden":
+        query = query.filter(InventoryLabel.hidden.is_(True))
+    elif filter_mode == "blocked":
+        query = query.filter(InventoryLabel.blocked.is_(True))
+
+    rows = (
+        query.order_by(
+            InventoryLabel.hidden.desc(),
+            InventoryLabel.reference.asc(),
+            InventoryLabel.fifo_date.asc(),
+            InventoryLabel.id.asc(),
+        )
+        .limit(min(max(limit, 1), 20000))
+        .all()
+    )
+
+    scanned_ids: set[int] = set()
+    if rows:
+        scanned_ids = {
+            r[0]
+            for r in db.query(ShipmentLabel.inventory_label_id)
+            .join(Shipment, ShipmentLabel.shipment_id == Shipment.id)
+            .filter(
+                ShipmentLabel.inventory_label_id.in_([row.id for row in rows]),
+                ShipmentLabel.status.in_([ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL]),
+                Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
+            )
+            .all()
+        }
+
+    items = [
+        InventoryItemSchema(
+            id=row.id,
+            label=row.label,
+            reference=row.reference,
+            quantity=float(row.quantity),
+            fifo_date=row.fifo_date.strftime("%d.%m.%Y %H:%M"),
+            blocked=bool(row.blocked),
+            hidden=bool(row.hidden),
+            scanned=row.id in scanned_ids,
+        )
+        for row in rows
+    ]
+
+    return InventoryListResponseSchema(
+        total=total,
+        active_count=active_count,
+        hidden_count=hidden_count,
+        blocked_count=blocked_count,
+        items=items,
+    )
+
+
+@router.patch("/labels/bulk-hidden")
+def set_inventory_labels_bulk_hidden(
+    req: _BulkToggleHiddenRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Filtrelenen birden fazla etiketi (okutulmamış olanları) tek seferde gizliye alır veya aktif eder.
+    Ardından açık sevkiyatları tek seferde yeniden hesaplar.
+    """
+    ids = list(set(req.label_ids or []))
+    if not ids:
+        return {"updated": 0, "hidden": bool(req.hidden)}
+
+    # Okutulmuş etiketler gizlenemez
+    scanned_ids = {
+        r[0]
+        for r in db.query(ShipmentLabel.inventory_label_id)
+        .join(Shipment, ShipmentLabel.shipment_id == Shipment.id)
+        .filter(
+            ShipmentLabel.inventory_label_id.in_(ids),
+            ShipmentLabel.status.in_([ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL]),
+            Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
+        )
+        .all()
+    }
+    target_ids = [i for i in ids if i not in scanned_ids]
+    if not target_ids:
+        return {"updated": 0, "hidden": bool(req.hidden)}
+
+    updated_count = (
+        db.query(InventoryLabel)
+        .filter(InventoryLabel.id.in_(target_ids))
+        .update({InventoryLabel.hidden: bool(req.hidden)}, synchronize_session="fetch")
+    )
+    db.commit()
+
+    has_active_shipments = (
+        db.query(Shipment.id)
+        .filter(Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]))
+        .first()
+        is not None
+    )
+    if has_active_shipments:
+        from app.services.shipment_service import recalculate_shipments
+        from app.routers.operation import _broadcast_full_status
+
+        recalculate_shipments(db)
+        _broadcast_full_status(db, "recalculate")
+    else:
+        lookup_cache.reload_inventory_labels(db)
+
+    return {"updated": int(updated_count), "hidden": bool(req.hidden)}
+
+
+@router.patch("/labels/{label_id}/hidden", response_model=InventoryItemSchema)
+def set_inventory_label_hidden(
+    label_id: int,
+    req: _ToggleHiddenRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Etiketin içerik bilgilerini değiştirmeden sadece gizlilik (hidden) durumunu günceller.
+    Gizlenen etiket sevkiyat FIFO hesaplamasına dahil edilmez; açık sevkiyatlar otomatik yeniden hesaplanır.
+    """
+    inv = db.query(InventoryLabel).filter(InventoryLabel.id == label_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Etiket bulunamadı")
+
+    inv.hidden = bool(req.hidden)
+    db.commit()
+    db.refresh(inv)
+
+    has_active_shipments = (
+        db.query(Shipment.id)
+        .filter(Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]))
+        .first()
+        is not None
+    )
+    if has_active_shipments:
+        from app.services.shipment_service import recalculate_shipments
+        from app.routers.operation import _broadcast_full_status
+
+        recalculate_shipments(db)
+        _broadcast_full_status(db, "recalculate")
+    else:
+        lookup_cache.reload_inventory_labels(db)
+
+    is_scanned = (
+        db.query(ShipmentLabel.id)
+        .join(Shipment, ShipmentLabel.shipment_id == Shipment.id)
+        .filter(
+            ShipmentLabel.inventory_label_id == inv.id,
+            ShipmentLabel.status.in_([ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL]),
+            Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
+        )
+        .first()
+        is not None
+    )
+
+    return InventoryItemSchema(
+        id=inv.id,
+        label=inv.label,
+        reference=inv.reference,
+        quantity=float(inv.quantity),
+        fifo_date=inv.fifo_date.strftime("%d.%m.%Y %H:%M"),
+        blocked=bool(inv.blocked),
+        hidden=bool(inv.hidden),
+        scanned=is_scanned,
+    )
 
 
 @router.get("/debug/reference/{reference}")

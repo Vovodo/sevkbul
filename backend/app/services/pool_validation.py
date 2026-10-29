@@ -21,6 +21,8 @@ class PoolCheckResult(str, Enum):
     NOT_IN_STOCK = "not_in_stock"
     NO_ACTIVE_SHIPMENT = "no_active_shipment"
     QUANTITY_EXCEEDED = "quantity_exceeded"
+    BLOCKED_LABEL = "blocked_label"
+    NOT_BLOCKED_LABEL = "not_blocked_label"
 
 
 @dataclass
@@ -86,6 +88,98 @@ def _already_scanned(db: Session, inventory_id: int) -> ShipmentLabel | None:
     )
 
 
+def _expected_fifo_hint(
+    db: Session,
+    inv: InventoryLabel,
+    target_shipment: Shipment | None,
+) -> tuple[str | None, str | None, str | None]:
+    """
+    Okutulan etiket sevkiyat dışı veya miktarı dolmuş olduğunda:
+    - Seçili sevkiyatta sıradaki açık FIFO tarihini ve kalan adedi,
+    - Etiketin başka bir açık sevkiyata uygun olup olmadığını,
+    - Kullanıcıya net Türkçe yönlendirme mesajını döner.
+    """
+    from sqlalchemy import func
+    from app.services.fifo_quota import format_group
+
+    expected_date_str: str | None = None
+    expected_rem: Decimal | None = None
+    ref_in_target = False
+
+    if target_shipment is not None:
+        gid = target_shipment.group_id if target_shipment.group_id is not None else target_shipment.id
+        ref_shipments = (
+            db.query(Shipment)
+            .filter(
+                (Shipment.group_id == gid) | (Shipment.id == gid),
+                Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
+            )
+            .all()
+        )
+        matched = [
+            s for s in ref_shipments
+            if s.reference.strip().upper() == inv.reference.strip().upper()
+        ]
+        if matched:
+            ref_in_target = True
+            sh = matched[0]
+            hourly = bool(sh.hourly_fifo)
+            qmap = quota_map(db, sh)
+            for key in sorted(qmap.keys()):
+                rem = qmap[key] - scanned_on_date(db, sh, key)
+                if rem > Decimal("0.001"):
+                    expected_date_str = format_group(key, hourly)
+                    expected_rem = rem
+                    break
+
+    # Bu etiket başka bir açık sevkiyatın açık FIFO tarihinde kabul ediliyor mu?
+    suggested_group_name: str | None = None
+    other_shipments = (
+        db.query(Shipment)
+        .filter(
+            func.upper(func.trim(Shipment.reference)) == inv.reference.strip().upper(),
+            Shipment.status == ShipmentStatus.ACTIVE,
+        )
+        .order_by(
+            Shipment.sort_order.asc().nulls_last(),
+            Shipment.created_at.asc(),
+            Shipment.id.asc(),
+        )
+        .all()
+    )
+    target_gid = (
+        (target_shipment.group_id if target_shipment.group_id is not None else target_shipment.id)
+        if target_shipment is not None else None
+    )
+    for other in other_shipments:
+        other_gid = other.group_id if other.group_id is not None else other.id
+        if target_gid is not None and other_gid == target_gid:
+            continue
+        if shipment_scanned_total(db, other) >= Decimal(other.requested_quantity):
+            continue
+        hourly = bool(other.hourly_fifo)
+        key = group_key(inv.fifo_date, hourly)
+        qmap = quota_map(db, other)
+        if key in qmap and scanned_on_date(db, other, key) < qmap[key] - Decimal("0.001"):
+            suggested_group_name = other.group_name or other.name or f"{other_gid}. Sevkiyat"
+            break
+
+    inv_date_str = inv.fifo_date.strftime("%d.%m.%Y")
+    parts: list[str] = []
+    if target_shipment is not None and not ref_in_target:
+        parts.append(f"{inv.reference} referansı seçili sevkiyatta yok.")
+    elif expected_date_str is not None and expected_rem is not None:
+        rem_int = int(expected_rem) if expected_rem == int(expected_rem) else float(expected_rem)
+        parts.append(
+            f"Okutulan FIFO: {inv_date_str} — Önce {expected_date_str} tarihli etiket okutulmalı (Kalan: {rem_int} adet)."
+        )
+    if suggested_group_name:
+        parts.append(f"Bu etiket '{suggested_group_name}' sevkiyatına uygun.")
+
+    hint_text = " ".join(parts) if parts else None
+    return expected_date_str, suggested_group_name, hint_text
+
+
 def _own_row(db: Session, shipment_id: int, inventory_id: int) -> ShipmentLabel | None:
     return (
         db.query(ShipmentLabel)
@@ -97,8 +191,21 @@ def _own_row(db: Session, shipment_id: int, inventory_id: int) -> ShipmentLabel 
     )
 
 
-def _date_decision(db: Session, inv: InventoryLabel, shipment: Shipment) -> PoolCheck:
+def _date_decision(
+    db: Session,
+    inv: InventoryLabel,
+    shipment: Shipment,
+    blocked_only: bool = False,
+) -> PoolCheck:
     """Seçilen sevkiyatta bu etiketin FIFO tarihi açık mı."""
+    is_blocked = bool(getattr(inv, "blocked", False))
+    if blocked_only and not is_blocked:
+        return PoolCheck(
+            result=PoolCheckResult.NOT_BLOCKED_LABEL,
+            inventory=inv,
+            shipment=shipment,
+        )
+
     if (
         shipment.status == ShipmentStatus.COMPLETED
         or shipment_scanned_total(db, shipment) >= Decimal(shipment.requested_quantity)
@@ -140,14 +247,16 @@ def check_label_in_shipment_pool(
     label: str,
     target_shipment_id: int | None = None,
     target_group_id: int | None = None,
+    blocked_only: bool = False,
 ) -> PoolCheck:
     """Okutma, barkoda değil FIFO tarihinin kalan kotasına bakar.
 
     Seçili sevkiyatta o tarih varsa ve kotası dolmadıysa etiket kabul edilir.
-    Etiket başka sevkiyatın tahmini listesinde olsa bile kilitli sayılmaz.
+    blocked_only=True ise yalnızca seçili sevkiyattaki referanslara ait BLOKAJLI
+    etiketler kabul edilir; blokajsız etiketler reddedilir.
     """
     inv = find_inventory_label(db, label)
-    if not inv:
+    if not inv or bool(getattr(inv, "hidden", False)):
         return PoolCheck(result=PoolCheckResult.NOT_IN_STOCK)
 
     already = _already_scanned(db, inv.id)
@@ -172,19 +281,20 @@ def check_label_in_shipment_pool(
         if not group_shipments:
             return PoolCheck(result=PoolCheckResult.NO_ACTIVE_SHIPMENT)
 
-        matches = [s for s in group_shipments if s.reference == inv.reference]
+        matches = [s for s in group_shipments if s.reference.strip().upper() == inv.reference.strip().upper()]
         if not matches:
             return PoolCheck(
                 result=PoolCheckResult.OUTSIDE_POOL,
                 inventory=inv,
                 shipment=group_shipments[0],
             )
-        return _date_decision(db, inv, matches[0])
+        return _date_decision(db, inv, matches[0], blocked_only=blocked_only)
 
+    from sqlalchemy import func
     candidates = (
         db.query(Shipment)
         .filter(
-            Shipment.reference == inv.reference,
+            func.upper(func.trim(Shipment.reference)) == inv.reference.strip().upper(),
             Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
         )
         .order_by(
@@ -196,6 +306,14 @@ def check_label_in_shipment_pool(
     )
     if not candidates:
         return PoolCheck(result=PoolCheckResult.OUTSIDE_POOL, inventory=inv)
+
+    is_blocked = bool(getattr(inv, "blocked", False))
+    if blocked_only and not is_blocked:
+        return PoolCheck(
+            result=PoolCheckResult.NOT_BLOCKED_LABEL,
+            inventory=inv,
+            shipment=candidates[0],
+        )
 
     full_match: Shipment | None = None
     for shipment in candidates:
@@ -211,7 +329,7 @@ def check_label_in_shipment_pool(
         if scanned_on_date(db, shipment, key) >= quota_map(db, shipment)[key] - Decimal("0.001"):
             full_match = shipment
             continue
-        return _date_decision(db, inv, shipment)
+        return _date_decision(db, inv, shipment, blocked_only=blocked_only)
 
     if full_match:
         return PoolCheck(

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { Globe, Printer, TriangleAlert, X } from 'lucide-react';
+import { Download, Globe, Printer, TriangleAlert, X } from 'lucide-react';
 import { api, ShipmentManifest } from '../api';
 import { useLiveUpdates } from '../useLiveUpdates';
 import Logo from './Logo';
@@ -143,6 +143,14 @@ export default function ManifestModal({ isOpen, onClose }: ManifestModalProps) {
             </div>
           </div>
           <div className="manifest-actions">
+            <a
+              className="op-btn secondary compact"
+              href={api.exportManifestExcelUrl(selectedGroupId !== 'all' ? selectedGroupId : null)}
+              download
+              style={{ fontWeight: 700, textDecoration: 'none', borderColor: '#10b981', color: '#6ee7b7' }}
+            >
+              <Download size={15} /> Excel İndir
+            </a>
             <button type="button" className="op-btn primary compact" onClick={handlePrint} style={{ fontWeight: 700 }}>
               <Printer size={15} /> Yazdır / PDF
             </button>
