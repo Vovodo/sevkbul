@@ -14,6 +14,7 @@ from app.services.shipment_service import (
     get_shipment_progress,
     ideal_fifo_dates,
     rebalance_reference_pending,
+    recalculate_shipments,
 )
 
 
@@ -108,6 +109,81 @@ def reset_active_shipments(db: Session) -> int:
         pass  # PostgreSQL veya farklı DB'lerde hata yutulur
 
     return count
+
+
+def reset_group_scans(db: Session, group_id: int) -> int:
+    """Belirli bir sevkiyat grubunun tüm okutmalarını sıfırlar; sevkiyatın kendisini ve diğer sevkiyatların okutmalarını korur."""
+    shipments = (
+        db.query(Shipment)
+        .filter(
+            (Shipment.group_id == group_id) | (Shipment.id == group_id),
+            Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
+        )
+        .all()
+    )
+    if not shipments:
+        raise ValueError("Sevkiyat grubu bulunamadı")
+
+    shipment_ids = [s.id for s in shipments]
+    cleared = (
+        db.query(ShipmentLabel)
+        .filter(
+            ShipmentLabel.shipment_id.in_(shipment_ids),
+            ShipmentLabel.status.in_([ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL]),
+        )
+        .update(
+            {
+                ShipmentLabel.scanned_quantity: Decimal("0"),
+                ShipmentLabel.status: ShipmentLabelStatus.PENDING,
+            },
+            synchronize_session="fetch",
+        )
+    )
+    db.query(ScanLog).filter(ScanLog.shipment_id.in_(shipment_ids)).delete(synchronize_session=False)
+    for s in shipments:
+        if s.status == ShipmentStatus.COMPLETED:
+            s.status = ShipmentStatus.ACTIVE
+            s.completed_at = None
+    db.commit()
+
+    recalculate_shipments(db)
+    return int(cleared)
+
+
+def reset_all_scans(db: Session) -> int:
+    """Açık/tamamlanmış tüm sevkiyatların okutmalarını sıfırlar; sevkiyatları silmez ve FIFO havuzlarını yeniden hesaplar."""
+    shipments = (
+        db.query(Shipment)
+        .filter(Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]))
+        .all()
+    )
+    if not shipments:
+        return 0
+
+    shipment_ids = [s.id for s in shipments]
+    cleared = (
+        db.query(ShipmentLabel)
+        .filter(
+            ShipmentLabel.shipment_id.in_(shipment_ids),
+            ShipmentLabel.status.in_([ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL]),
+        )
+        .update(
+            {
+                ShipmentLabel.scanned_quantity: Decimal("0"),
+                ShipmentLabel.status: ShipmentLabelStatus.PENDING,
+            },
+            synchronize_session="fetch",
+        )
+    )
+    db.query(ScanLog).delete(synchronize_session=False)
+    for s in shipments:
+        if s.status == ShipmentStatus.COMPLETED:
+            s.status = ShipmentStatus.ACTIVE
+            s.completed_at = None
+    db.commit()
+
+    recalculate_shipments(db)
+    return int(cleared)
 
 
 def get_scanned_labels(db: Session, shipment_id: int) -> list[dict]:
@@ -251,28 +327,32 @@ def get_shipment_manifest(
         k = group_key(qrow.fifo_group, h)
         quotas_by_sid[qrow.shipment_id][k] = Decimal(qrow.quota_quantity)
 
-    # 2. Tüm okutulan etiketleri tek sorguda çek
-    scanned_rows = (
+    # 2. Tüm sevkiyat etiketlerini (SCANNED, PARTIAL ve PENDING) tek sorguda çek
+    all_sl_rows = (
         db.query(ShipmentLabel)
         .options(joinedload(ShipmentLabel.inventory_label))
-        .filter(
-            ShipmentLabel.shipment_id.in_(sids),
-            ShipmentLabel.status.in_([ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL]),
-        )
+        .filter(ShipmentLabel.shipment_id.in_(sids))
         .all()
     )
     scanned_by_sid_date: dict[int, dict[datetime, list[ShipmentLabel]]] = defaultdict(lambda: defaultdict(list))
     scanned_sum_by_sid_date: dict[int, dict[datetime, Decimal]] = defaultdict(lambda: defaultdict(lambda: Decimal("0")))
+    blocked_by_sid_date: dict[int, dict[datetime, list[InventoryLabel]]] = defaultdict(lambda: defaultdict(list))
+    blocked_pending_by_sid: dict[int, list[InventoryLabel]] = defaultdict(list)
     refs_with_scans: set[str] = set()
-    for sl in scanned_rows:
+    for sl in all_sl_rows:
         inv = sl.inventory_label
         if not inv:
             continue
         h = hourly_by_sid.get(sl.shipment_id, False)
         k = group_key(inv.fifo_date, h)
-        scanned_by_sid_date[sl.shipment_id][k].append(sl)
-        scanned_sum_by_sid_date[sl.shipment_id][k] += Decimal(sl.scanned_quantity or 0)
-        refs_with_scans.add(inv.reference.strip().upper())
+        if bool(getattr(inv, "blocked", False)) and not bool(getattr(inv, "hidden", False)):
+            blocked_by_sid_date[sl.shipment_id][k].append(inv)
+            if sl.status == ShipmentLabelStatus.PENDING and Decimal(inv.quantity) > 0:
+                blocked_pending_by_sid[sl.shipment_id].append(inv)
+        if sl.status in (ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL):
+            scanned_by_sid_date[sl.shipment_id][k].append(sl)
+            scanned_sum_by_sid_date[sl.shipment_id][k] += Decimal(sl.scanned_quantity or 0)
+            refs_with_scans.add(inv.reference.strip().upper())
 
     # 3. İdeal FIFO penceresini yalnızca gerçekten okutması olan referanslar için hesapla
     ideal: dict[int, set[datetime]] = {}
@@ -287,35 +367,6 @@ def get_shipment_manifest(
         )
         ideal = ideal_fifo_dates(db, all_ref_shipments)
 
-    # 4. Stoktaki blokajlı etiketleri tüm ilgili referanslar için tek sorguda çek
-    ref_keys = {s.reference.strip().upper() for s in shipments}
-    blocked_rows = (
-        db.query(InventoryLabel)
-        .filter(
-            InventoryLabel.blocked.is_(True),
-            InventoryLabel.hidden.is_(False),
-        )
-        .order_by(InventoryLabel.fifo_date.asc(), InventoryLabel.id.asc())
-        .all()
-    )
-    blocked_by_ref: dict[str, list[InventoryLabel]] = defaultdict(list)
-    blocked_inv_ids: list[int] = []
-    for r in blocked_rows:
-        rk = r.reference.strip().upper()
-        if rk in ref_keys:
-            blocked_by_ref[rk].append(r)
-            blocked_inv_ids.append(r.id)
-
-    blocked_consumed_ids: set[int] = set()
-    if blocked_inv_ids:
-        blocked_consumed_ids = {
-            row[0]
-            for row in db.query(ShipmentLabel.inventory_label_id).filter(
-                ShipmentLabel.inventory_label_id.in_(blocked_inv_ids),
-                ShipmentLabel.status.in_([ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL]),
-            ).all()
-        }
-
     manifests = []
     for s in shipments:
         prog = prog_by_sid[s.id]
@@ -324,8 +375,8 @@ def get_shipment_manifest(
         inside = ideal.get(s.id, set())
         scanned_by_date = scanned_by_sid_date.get(s.id, {})
         scanned_sums = scanned_sum_by_sid_date.get(s.id, {})
+        blocked_by_date = blocked_by_sid_date.get(s.id, {})
 
-        ref_blocked_rows = blocked_by_ref.get(s.reference.strip().upper(), [])
         blocked_labels = [
             {
                 "label": r.label,
@@ -333,15 +384,8 @@ def get_shipment_manifest(
                 "fifo_time": r.fifo_date.strftime("%d.%m.%Y %H:%M"),
                 "blocked": True,
             }
-            for r in ref_blocked_rows
-            if r.id not in blocked_consumed_ids and Decimal(r.quantity) > 0
+            for r in sorted(blocked_pending_by_sid.get(s.id, []), key=lambda x: (x.fifo_date, x.id))
         ]
-        blocked_by_date: dict = {}
-        for r in ref_blocked_rows:
-            if Decimal(r.quantity) <= 0:
-                continue
-            bkey = group_key(r.fifo_date, use_hourly)
-            blocked_by_date.setdefault(bkey, []).append(r)
 
         items = []
         for key in sorted(quotas):
@@ -546,35 +590,63 @@ def list_candidate_labels(db: Session, shipment_id: int, fifo_group: str) -> dic
 
     end = key + (timedelta(minutes=1) if hourly else timedelta(days=1))
     from sqlalchemy import func
-    rows = (
-        db.query(InventoryLabel)
-        .filter(
-            func.upper(func.trim(InventoryLabel.reference)) == shipment.reference.strip().upper(),
-            InventoryLabel.hidden.is_(False),
-            InventoryLabel.fifo_date >= key,
-            InventoryLabel.fifo_date < end,
-        )
-        .order_by(InventoryLabel.fifo_date.asc(), InventoryLabel.id.asc())
-        .all()
-    )
     labels = []
-    if remaining > 0 and rows:
-        consumed = {
-            row[0]
-            for row in db.query(ShipmentLabel.inventory_label_id).filter(
-                ShipmentLabel.inventory_label_id.in_([row.id for row in rows]),
-                ShipmentLabel.status.in_([ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL]),
-            ).all()
-        }
-        for inv in rows:
-            if inv.id in consumed or Decimal(inv.quantity) <= 0:
-                continue
-            labels.append({
-                "label": inv.label,
-                "quantity": float(inv.quantity),
-                "fifo_time": inv.fifo_date.strftime("%H:%M"),
-                "blocked": bool(getattr(inv, "blocked", False)),
-            })
+    if remaining > 0:
+        own_pending = (
+            db.query(InventoryLabel)
+            .join(ShipmentLabel, ShipmentLabel.inventory_label_id == InventoryLabel.id)
+            .filter(
+                ShipmentLabel.shipment_id == shipment.id,
+                ShipmentLabel.status == ShipmentLabelStatus.PENDING,
+                InventoryLabel.hidden.is_(False),
+                InventoryLabel.fifo_date >= key,
+                InventoryLabel.fifo_date < end,
+            )
+            .order_by(InventoryLabel.fifo_date.asc(), InventoryLabel.id.asc())
+            .all()
+        )
+        if own_pending:
+            for inv in own_pending:
+                if Decimal(inv.quantity) <= 0:
+                    continue
+                labels.append({
+                    "label": inv.label,
+                    "quantity": float(inv.quantity),
+                    "fifo_time": inv.fifo_date.strftime("%H:%M"),
+                    "blocked": bool(getattr(inv, "blocked", False)),
+                })
+        else:
+            rows = (
+                db.query(InventoryLabel)
+                .filter(
+                    func.upper(func.trim(InventoryLabel.reference)) == shipment.reference.strip().upper(),
+                    InventoryLabel.hidden.is_(False),
+                    InventoryLabel.fifo_date >= key,
+                    InventoryLabel.fifo_date < end,
+                )
+                .order_by(InventoryLabel.fifo_date.asc(), InventoryLabel.id.asc())
+                .all()
+            )
+            if rows:
+                consumed = {
+                    row[0]
+                    for row in db.query(ShipmentLabel.inventory_label_id)
+                    .join(Shipment, ShipmentLabel.shipment_id == Shipment.id)
+                    .filter(
+                        ShipmentLabel.inventory_label_id.in_([row.id for row in rows]),
+                        ShipmentLabel.status.in_([ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL]),
+                        Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
+                    ).all()
+                }
+                for inv in rows:
+                    if inv.id in consumed or Decimal(inv.quantity) <= 0:
+                        continue
+                    labels.append({
+                        "label": inv.label,
+                        "quantity": float(inv.quantity),
+                        "fifo_time": inv.fifo_date.strftime("%H:%M"),
+                        "blocked": bool(getattr(inv, "blocked", False)),
+                    })
 
     return {"remaining": float(remaining), "labels": labels}
 

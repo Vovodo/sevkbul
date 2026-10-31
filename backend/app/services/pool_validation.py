@@ -79,10 +79,12 @@ def find_inventory_label(db: Session, label: str) -> InventoryLabel | None:
 def _already_scanned(db: Session, inventory_id: int) -> ShipmentLabel | None:
     return (
         db.query(ShipmentLabel)
+        .join(Shipment, ShipmentLabel.shipment_id == Shipment.id)
         .options(joinedload(ShipmentLabel.shipment))
         .filter(
             ShipmentLabel.inventory_label_id == inventory_id,
-            ShipmentLabel.status == ShipmentLabelStatus.SCANNED,
+            ShipmentLabel.status.in_([ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL]),
+            Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
         )
         .first()
     )
@@ -256,7 +258,7 @@ def check_label_in_shipment_pool(
     etiketler kabul edilir; blokajsız etiketler reddedilir.
     """
     inv = find_inventory_label(db, label)
-    if not inv or bool(getattr(inv, "hidden", False)):
+    if not inv:
         return PoolCheck(result=PoolCheckResult.NOT_IN_STOCK)
 
     already = _already_scanned(db, inv.id)
@@ -267,6 +269,9 @@ def check_label_in_shipment_pool(
             shipment=already.shipment,
             shipment_label=already,
         )
+
+    if bool(getattr(inv, "hidden", False)):
+        return PoolCheck(result=PoolCheckResult.NOT_IN_STOCK)
 
     if target_group_id is not None or target_shipment_id is not None:
         gid = target_group_id if target_group_id is not None else target_shipment_id

@@ -658,8 +658,9 @@ class TestBlokajFeature:
         g1 = groups[0]
         ref_item = g1["items"][0]
         assert ref_item["reference"] == "REF-1"
+        # Sevkiyat 60 adet (01.06 ve 02.06) aldığı için bu sevkiyatın FIFO tarihlerinde 1 blokajlı (01.06) ve 1 blokajsız (02.06) etiket vardır!
         assert ref_item["blocked_label_count"] == 1
-        assert ref_item["unblocked_label_count"] == 2
+        assert ref_item["unblocked_label_count"] == 1
         assert ref_item["short_quantity"] == 0.0
 
         # 1. Normal mod (blocked_only=False): Blokajlı etiket (BLK-101) de FIFO içinde olduğu için okutulabilir (okutmaya engel değildir)!

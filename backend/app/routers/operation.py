@@ -22,7 +22,7 @@ from app.services.recalculate_job import get_recalculate_status, start_recalcula
 from app.services.scan_service import process_global_scan
 from app.services.operation_service import (
     reset_active_shipments, delete_shipment_group, get_scanned_labels, undo_scan, get_shipment_manifest,
-    list_candidate_labels, export_manifest_excel,
+    list_candidate_labels, export_manifest_excel, reset_group_scans, reset_all_scans,
 
 )
 from app.models import ScanLog, InventoryLabel
@@ -187,6 +187,25 @@ def reset_shipments(db: Session = Depends(get_db)):
     set_current_active_group_id(None)
     _broadcast_full_status(db, "reset", {"cancelled": count, "selected_group_id": None})
     return {"cancelled": count}
+
+
+@router.post("/scans/reset")
+def reset_all_scans_endpoint(db: Session = Depends(get_db)):
+    """Tüm aktif sevkiyatların okutmalarını sıfırlar (sevkiyatları silmez)."""
+    cleared = reset_all_scans(db)
+    _broadcast_full_status(db, "scans_reset", {"cleared": cleared})
+    return {"cleared": cleared, "groups": get_shipment_groups(db)}
+
+
+@router.post("/group/{group_id}/scans/reset")
+def reset_group_scans_endpoint(group_id: int, db: Session = Depends(get_db)):
+    """Tek bir sevkiyat grubunun okutmalarını sıfırlar; diğer sevkiyatlara dokunmaz."""
+    try:
+        cleared = reset_group_scans(db, group_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    _broadcast_full_status(db, "group_scans_reset", {"group_id": group_id, "cleared": cleared})
+    return {"group_id": group_id, "cleared": cleared, "groups": get_shipment_groups(db)}
 
 
 @router.post("/active-group/{group_id}")

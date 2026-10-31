@@ -39,10 +39,23 @@ async def upload_stock_excel(
             detail=f"Eksik kolonlar: {', '.join(result.missing_columns)}",
         )
 
-    lookup_cache.reload_inventory_labels(db)
+    has_active_shipments = (
+        db.query(Shipment.id)
+        .filter(Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]))
+        .first()
+        is not None
+    )
+    if has_active_shipments:
+        from app.services.shipment_service import recalculate_shipments
+        from app.routers.operation import _broadcast_full_status
 
-    total = db.query(func.count(InventoryLabel.id)).scalar() or 0
-    refs = db.query(func.count(func.distinct(InventoryLabel.reference))).scalar() or 0
+        recalculate_shipments(db)
+        _broadcast_full_status(db, "recalculate")
+    else:
+        lookup_cache.reload_inventory_labels(db)
+
+    total = db.query(func.count(InventoryLabel.id)).filter(InventoryLabel.hidden.is_(False)).scalar() or 0
+    refs = db.query(func.count(func.distinct(InventoryLabel.reference))).filter(InventoryLabel.hidden.is_(False)).scalar() or 0
     ws_manager.broadcast_sync("stock_import", {
         "total_labels": total,
         "total_references": refs,

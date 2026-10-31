@@ -313,6 +313,14 @@ export const api = {
   resetShipments: () =>
     request<{ cancelled: number }>('/api/shipment/reset', { method: 'POST' }),
 
+  resetAllScans: () =>
+    request<{ cleared: number; groups: ShipmentGroup[] }>('/api/shipment/scans/reset', { method: 'POST' }),
+
+  resetGroupScans: (groupId: number) =>
+    request<{ group_id: number; cleared: number; groups: ShipmentGroup[] }>(`/api/shipment/group/${groupId}/scans/reset`, {
+      method: 'POST',
+    }),
+
   deleteShipmentGroup: (groupId: number) =>
     request<{ removed_group_id: number; removed: number }>(`/api/shipment/group/${groupId}`, {
       method: 'DELETE',

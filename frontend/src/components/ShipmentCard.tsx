@@ -13,6 +13,7 @@ interface ShipmentCardProps {
   onUndoScan: (shipmentId: number, label: string) => Promise<void>;
   onRenameGroup: (groupId: number, name: string) => void;
   onRemove: (groupId: number) => void;
+  onResetScans?: (groupId: number) => void;
   dragging?: boolean;
   dropTarget?: boolean;
   onDragStart?: (groupId: number) => void;
@@ -32,6 +33,7 @@ export default function ShipmentCard({
   onUndoScan,
   onRenameGroup,
   onRemove,
+  onResetScans,
   dragging,
   dropTarget,
   onDragStart,
@@ -80,8 +82,17 @@ export default function ShipmentCard({
   const totalBlockedLabels = g.items.reduce((sum, it) => sum + Number(it.blocked_label_count || 0), 0);
   const fmtNum = (n: number) => new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 2 }).format(n);
 
+  const toggleCardExpand = () => {
+    setExpanded(v => {
+      const next = !v;
+      if (next && !isSelected) onSelect?.();
+      return next;
+    });
+  };
+
   const openWithFilter = (mode: RefFilterMode, e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
+    if (!isSelected) onSelect?.();
     setRefFilter(mode);
     setExpanded(true);
   };
@@ -148,6 +159,20 @@ export default function ShipmentCard({
         });
         return next;
       });
+      setOpenDate(prev => {
+        let changed = false;
+        const next = { ...prev };
+        ids.forEach(id => {
+          const curDate = next[id];
+          if (!curDate) return;
+          const items = all.find(m => m.shipment_id === id)?.items || [];
+          if (!items.some(it => it.fifo_group_date === curDate)) {
+            next[id] = null;
+            changed = true;
+          }
+        });
+        return changed ? next : prev;
+      });
     } catch {
       setManifestMap(prev => {
         const next = { ...prev };
@@ -182,6 +207,20 @@ export default function ShipmentCard({
   };
 
   useEffect(() => {
+    // Grup verisi değiştiğinde (okutma, yeni stok yükleme, yeniden hesaplama vb.)
+    // kapalı tarihlerin bayat aday önbelleğini temizle, açık olanları yeniden yükle.
+    const activeKeys = new Set<string>();
+    Object.entries(openDateRef.current).forEach(([sid, date]) => {
+      if (date) activeKeys.add(`${sid}|${date}`);
+    });
+    setCandidateMap(prev => {
+      const next: Record<string, CandidateLabel[]> = {};
+      activeKeys.forEach(k => {
+        if (prev[k] != null) next[k] = prev[k];
+      });
+      return next;
+    });
+
     const ids = Object.keys(manifestMapRef.current).map(Number);
     if (ids.length) void applyManifest(ids);
     Object.entries(openDateRef.current).forEach(([sid, date]) => {
@@ -191,12 +230,14 @@ export default function ShipmentCard({
 
   const toggleRefItem = (shipmentId: number) => {
     const opening = !expandedRefs[shipmentId];
+    if (opening && !isSelected) onSelect?.();
     setExpandedRefs(prev => ({ ...prev, [shipmentId]: opening }));
     if (opening) void applyManifest([shipmentId]);
   };
 
   const toggleDate = (shipmentId: number, fifoGroup: string) => {
     const opening = openDate[shipmentId] !== fifoGroup;
+    if (opening && !isSelected) onSelect?.();
     setOpenDate(prev => ({
       ...prev,
       [shipmentId]: opening ? fifoGroup : null,
@@ -230,7 +271,7 @@ export default function ShipmentCard({
         onDrop(g.group_id, Number.isFinite(parsed) ? parsed : undefined);
       }}
     >
-      <div className="sc-card-outer" onClick={() => setExpanded(v => !v)}>
+      <div className="sc-card-outer" onClick={toggleCardExpand}>
         <div className="sc-card-top">
           <div className="sc-card-identity">
             <button
@@ -289,7 +330,7 @@ export default function ShipmentCard({
                   disabled={savingName}
                 />
               ) : (
-                <span className="sc-name" onClick={() => setExpanded(v => !v)}>{displayName}</span>
+                <span className="sc-name" onClick={toggleCardExpand}>{displayName}</span>
               )}
               <button className="sc-edit-btn" onClick={startEditing} title="İsim Düzenle" type="button">
                 <Pencil size={12} />
@@ -298,7 +339,7 @@ export default function ShipmentCard({
           </div>
 
           <div className="sc-card-right" onClick={e => e.stopPropagation()}>
-            <div className="sc-qty-summary" onClick={() => setExpanded(v => !v)}>
+            <div className="sc-qty-summary" onClick={toggleCardExpand}>
               <strong className="sc-qty-numbers">
                 {fmtNum(g.scanned_quantity)} <span>/ {fmtNum(g.requested_quantity)}</span>
               </strong>
@@ -315,11 +356,26 @@ export default function ShipmentCard({
                   {isSelected ? 'Seçili' : 'Seç'}
                 </button>
               )}
+              {onResetScans && (
+                <button
+                  type="button"
+                  className="sc-reset-scans-btn"
+                  disabled={g.scanned_quantity <= 0}
+                  onClick={() => onResetScans(g.group_id)}
+                  title={
+                    g.scanned_quantity > 0
+                      ? 'Sadece bu sevkiyattaki okutmaları sıfırla (sevkiyat silinmez)'
+                      : 'Bu sevkiyatta sıfırlanacak okutma yok'
+                  }
+                >
+                  Okutmayı Sıfırla
+                </button>
+              )}
               <button type="button" className="sc-remove-btn" onClick={() => onRemove(g.group_id)} title="Bu sevkiyatı kaldır">
                 Kaldır
               </button>
             </span>
-            <span className="sc-chevron" onClick={() => setExpanded(v => !v)}>
+            <span className="sc-chevron" onClick={toggleCardExpand}>
               {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
             </span>
           </div>

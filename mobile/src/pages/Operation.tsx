@@ -35,7 +35,11 @@ export default function OperationPage() {
   const [loading, setLoading] = useState('');
   const [recalc, setRecalc] = useState<RecalculateStatus | null>(null);
   const [removeAsk, setRemoveAsk] = useState<
-    { kind: 'remove'; groupId: number; label: string } | { kind: 'reset' } | null
+    | { kind: 'remove'; groupId: number; label: string }
+    | { kind: 'reset' }
+    | { kind: 'reset-all-scans' }
+    | { kind: 'reset-group-scans'; groupId: number; label: string }
+    | null
   >(null);
   const [removeText, setRemoveText] = useState('');
   const [error, setError] = useState('');
@@ -259,11 +263,12 @@ export default function OperationPage() {
     }
 
     if (msg.event === 'stock_import') {
-      // Başka bir kullanıcı stok yükledi
+      // Başka bir sekme veya kullanıcı stok yükledi
       if (d?.total_labels != null) {
         setStockLoaded(d.total_labels > 0);
         setStockCount(d.total_labels);
       }
+      api.getGroups().then(setGroups).catch(() => {});
       return;
     }
 
@@ -335,11 +340,16 @@ export default function OperationPage() {
         phase: 'done',
       });
       window.setTimeout(() => setUploadOverlay(null), 700);
-      if (!replace && groups.length > 0) {
-        setDropNote(`Stok güncellendi (${r.successful.toLocaleString('tr-TR')} etiket). Sevkiyatlar yeni stokla yeniden hesaplanıyor...`);
-        await triggerRecalculateQuiet();
-      } else if (!replace) {
-        setDropNote(`Stok güncellendi (${r.successful.toLocaleString('tr-TR')} etiket).`);
+      if (groups.length > 0) {
+        const updated = await api.getGroups();
+        setGroups(updated);
+        setDropNote(
+          replace
+            ? `Yeni stok Exceli yüklendi (${r.successful.toLocaleString('tr-TR')} etiket). Açık sevkiyatlar ve mevcut okutmalar yeni stokla yeniden hesaplandı.`
+            : `Stok güncellendi (${r.successful.toLocaleString('tr-TR')} etiket). Açık sevkiyatlar yeni stokla yeniden hesaplandı.`
+        );
+      } else {
+        setDropNote(`Stok yüklendi (${r.successful.toLocaleString('tr-TR')} etiket).`);
       }
     } catch (e: unknown) {
       window.clearInterval(timer);
@@ -614,6 +624,18 @@ export default function OperationPage() {
     setRemoveText('');
   };
 
+  const handleResetAllScans = () => {
+    setRemoveAsk({ kind: 'reset-all-scans' });
+    setRemoveText('');
+  };
+
+  const askResetGroupScans = (groupId: number) => {
+    const group = groups.find(g => g.group_id === groupId);
+    const index = groups.findIndex(g => g.group_id === groupId);
+    setRemoveAsk({ kind: 'reset-group-scans', groupId, label: group?.name || `${index + 1}. Sevkiyat` });
+    setRemoveText('');
+  };
+
   const handleUndoScan = async (shipmentId: number, label: string) => {
     if (!window.confirm(`${label} okutmasını kaldırmak istiyor musunuz?`)) return;
     setError('');
@@ -637,7 +659,7 @@ export default function OperationPage() {
   const confirmTyped = removeText.trim().toLocaleLowerCase('tr-TR') === 'evet';
 
   const confirmRemoveGroup = async () => {
-    if (!removeAsk || !confirmTyped || loading === 'remove' || loading === 'reset') return;
+    if (!removeAsk || !confirmTyped || loading === 'remove' || loading === 'reset' || loading === 'reset-scans') return;
     setError('');
     if (removeAsk.kind === 'reset') {
       setLoading('reset');
@@ -653,6 +675,37 @@ export default function OperationPage() {
         setRemoveText('');
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : 'Sıfırlama hatası');
+      } finally {
+        setLoading('');
+      }
+      return;
+    }
+    if (removeAsk.kind === 'reset-all-scans') {
+      setLoading('reset-scans');
+      try {
+        const res = await api.resetAllScans();
+        setGroups(res.groups);
+        setRecentScans([]);
+        setLastScan(null);
+        setRemoveAsk(null);
+        setRemoveText('');
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : 'Okutmalar sıfırlanamadı');
+      } finally {
+        setLoading('');
+      }
+      return;
+    }
+    if (removeAsk.kind === 'reset-group-scans') {
+      setLoading('reset-scans');
+      try {
+        const res = await api.resetGroupScans(removeAsk.groupId);
+        setGroups(res.groups);
+        setLastScan(null);
+        setRemoveAsk(null);
+        setRemoveText('');
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : 'Sevkiyat okutmaları sıfırlanamadı');
       } finally {
         setLoading('');
       }
@@ -832,15 +885,27 @@ export default function OperationPage() {
           {isScanning && (
             <>
               <span className="op-header-divider" aria-hidden />
-              <button
-                type="button"
-                className="op-nav-btn is-danger"
-                onClick={handleReset}
-                disabled={loading === 'reset'}
-              >
-                <RotateCcw size={14} />
-                <span>{loading === 'reset' ? 'Sıfırlanıyor...' : 'Sevkiyatı Sıfırla'}</span>
-              </button>
+              <div className="op-header-group">
+                <button
+                  type="button"
+                  className="op-nav-btn is-warning"
+                  onClick={handleResetAllScans}
+                  disabled={loading === 'reset-scans' || groups.every(g => g.scanned_quantity <= 0)}
+                  title="Sevkiyatları silmeden yalnızca tüm yapılan okutmaları sıfırlar"
+                >
+                  <RefreshCw size={14} />
+                  <span>{loading === 'reset-scans' ? 'Sıfırlanıyor...' : 'Okutmaları Sıfırla'}</span>
+                </button>
+                <button
+                  type="button"
+                  className="op-nav-btn is-danger"
+                  onClick={handleReset}
+                  disabled={loading === 'reset'}
+                >
+                  <RotateCcw size={14} />
+                  <span>{loading === 'reset' ? 'Sıfırlanıyor...' : 'Sevkiyatı Sıfırla'}</span>
+                </button>
+              </div>
             </>
           )}
         </nav>
@@ -1167,6 +1232,7 @@ export default function OperationPage() {
                 onUndoScan={handleUndoScan}
                 onRenameGroup={handleRenameGroup}
                 onRemove={askRemoveGroup}
+                onResetScans={askResetGroupScans}
                 dragging={dragGroupId === g.group_id}
                 dropTarget={dropGroupId === g.group_id && dragGroupId !== g.group_id}
                 onDragStart={setDragGroupId}
@@ -1332,11 +1398,23 @@ export default function OperationPage() {
               confirmRemoveGroup();
             }}
           >
-            <h3>{removeAsk.kind === 'reset' ? 'Tüm sevkiyatlar sıfırlansın mı?' : `${removeAsk.label} kaldırılsın mı?`}</h3>
+            <h3>
+              {removeAsk.kind === 'reset'
+                ? 'Tüm sevkiyatlar sıfırlansın mı?'
+                : removeAsk.kind === 'reset-all-scans'
+                  ? 'Tüm okutmalar sıfırlansın mı?'
+                  : removeAsk.kind === 'reset-group-scans'
+                    ? `${removeAsk.label} okutmaları sıfırlansın mı?`
+                    : `${removeAsk.label} kaldırılsın mı?`}
+            </h3>
             <p>
               {removeAsk.kind === 'reset'
                 ? 'Aktif sevkiyatlar ve okutmalar silinir. Silmek için evet yazın.'
-                : 'Okutmalarıyla birlikte silinir. Diğer sevkiyatlar aynı kalır. Silmek için evet yazın.'}
+                : removeAsk.kind === 'reset-all-scans'
+                  ? 'Sevkiyatlar silinmez; tüm sevkiyatlardaki okutulan etiketler sıfırlanır ve FIFO havuzları yeniden hesaplanır. Onaylamak için evet yazın.'
+                  : removeAsk.kind === 'reset-group-scans'
+                    ? 'Sevkiyat silinmez ve diğer sevkiyatlara dokunulmaz; yalnızca bu sevkiyattaki okutmalar sıfırlanır. Onaylamak için evet yazın.'
+                    : 'Okutmalarıyla birlikte silinir. Diğer sevkiyatlar aynı kalır. Silmek için evet yazın.'}
             </p>
             <input
               className="remove-confirm-input"
@@ -1353,9 +1431,13 @@ export default function OperationPage() {
               <button
                 type="submit"
                 className="op-btn danger compact"
-                disabled={!confirmTyped || loading === 'remove' || loading === 'reset'}
+                disabled={!confirmTyped || loading === 'remove' || loading === 'reset' || loading === 'reset-scans'}
               >
-                {loading === 'remove' || loading === 'reset' ? 'Siliniyor...' : 'Sil'}
+                {loading === 'remove' || loading === 'reset' || loading === 'reset-scans'
+                  ? 'İşleniyor...'
+                  : removeAsk.kind === 'reset-all-scans' || removeAsk.kind === 'reset-group-scans'
+                    ? 'Okutmaları Sıfırla'
+                    : 'Sil'}
               </button>
             </div>
           </form>

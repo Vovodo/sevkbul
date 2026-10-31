@@ -73,13 +73,21 @@ def import_excel(db: Session, file_content: bytes, replace_existing: bool = True
         result.missing_columns = missing
         return result
 
+    from app.models import Shipment, ShipmentLabel, ShipmentDateQuota, ScanLog, ShipmentStatus, ShipmentLabelStatus
     if replace_existing:
-        db.query(InventoryLabel).delete()
-        db.commit()
-        existing_by_label: dict[str, InventoryLabel] = {}
-    else:
-        existing_rows = db.query(InventoryLabel).all()
-        existing_by_label = {r.label: r for r in existing_rows}
+        cancelled_ids = [
+            r[0]
+            for r in db.query(Shipment.id).filter(Shipment.status == ShipmentStatus.CANCELLED).all()
+        ]
+        if cancelled_ids:
+            db.query(ShipmentDateQuota).filter(ShipmentDateQuota.shipment_id.in_(cancelled_ids)).delete(synchronize_session=False)
+            db.query(ShipmentLabel).filter(ShipmentLabel.shipment_id.in_(cancelled_ids)).delete(synchronize_session=False)
+            db.query(ScanLog).filter(ScanLog.shipment_id.in_(cancelled_ids)).delete(synchronize_session=False)
+            db.query(Shipment).filter(Shipment.id.in_(cancelled_ids)).delete(synchronize_session=False)
+            db.flush()
+
+    existing_rows = db.query(InventoryLabel).all()
+    existing_by_label: dict[str, InventoryLabel] = {r.label: r for r in existing_rows}
 
     seen_labels: set[str] = set()
     batch: list[InventoryLabel] = []
@@ -132,6 +140,8 @@ def import_excel(db: Session, file_content: bytes, replace_existing: bool = True
             existing_inv.quantity = quantity
             existing_inv.fifo_date = fifo_date
             existing_inv.blocked = is_blocked
+            if replace_existing:
+                existing_inv.hidden = False
             result.successful += 1
         else:
             batch.append(InventoryLabel(
@@ -140,6 +150,7 @@ def import_excel(db: Session, file_content: bytes, replace_existing: bool = True
                 quantity=quantity,
                 fifo_date=fifo_date,
                 blocked=is_blocked,
+                hidden=False,
             ))
 
         if len(result.preview_rows) < PREVIEW_LIMIT:
@@ -160,8 +171,52 @@ def import_excel(db: Session, file_content: bytes, replace_existing: bool = True
         db.bulk_save_objects(batch)
         db.commit()
         result.successful += len(batch)
-    elif not replace_existing and result.successful > 0:
+    elif result.successful > 0:
         db.commit()
+
+    # replace_existing=True ise yeni Excel'de yer almayan eski stok etiketlerini temizle:
+    # - Aktif bir sevkiyatta OKUTULMUŞ (SCANNED/PARTIAL) olan eski etiketlerin ID bağı bozulmasın diye
+    #   onları silmek yerine hidden=True yap (böylece okutma kaydı korunur ama yeni FIFO hesabına girmez).
+    # - Okutulmamış eski etiketleri ve onların PENDING tahsislerini tamamen sil.
+    if replace_existing and existing_by_label:
+        removed_inv_ids = [
+            inv.id
+            for lbl, inv in existing_by_label.items()
+            if lbl not in seen_labels
+        ]
+        if removed_inv_ids:
+            scanned_removed_ids = {
+                r[0]
+                for r in db.query(ShipmentLabel.inventory_label_id)
+                .join(Shipment, ShipmentLabel.shipment_id == Shipment.id)
+                .filter(
+                    ShipmentLabel.inventory_label_id.in_(removed_inv_ids),
+                    ShipmentLabel.status.in_([ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL]),
+                    Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
+                )
+                .all()
+            }
+            deletable_ids = [i for i in removed_inv_ids if i not in scanned_removed_ids]
+            if deletable_ids:
+                db.query(ShipmentLabel).filter(
+                    ShipmentLabel.inventory_label_id.in_(deletable_ids),
+                    ShipmentLabel.status == ShipmentLabelStatus.PENDING,
+                ).delete(synchronize_session=False)
+                db.query(ScanLog).filter(
+                    ScanLog.inventory_label_id.in_(deletable_ids),
+                ).update({ScanLog.inventory_label_id: None}, synchronize_session=False)
+                db.query(InventoryLabel).filter(
+                    InventoryLabel.id.in_(deletable_ids),
+                ).delete(synchronize_session=False)
+            if scanned_removed_ids:
+                db.query(ShipmentLabel).filter(
+                    ShipmentLabel.inventory_label_id.in_(scanned_removed_ids),
+                    ShipmentLabel.status == ShipmentLabelStatus.PENDING,
+                ).delete(synchronize_session=False)
+                db.query(InventoryLabel).filter(
+                    InventoryLabel.id.in_(scanned_removed_ids),
+                ).update({InventoryLabel.hidden: True}, synchronize_session=False)
+            db.commit()
 
     wb.close()
     return result

@@ -73,6 +73,9 @@ body {
   .op-header-actions {
     flex-wrap: nowrap;
   }
+  .op-header-group {
+    flex-wrap: nowrap;
+  }
 }
 
 .op-header-brand {
@@ -115,6 +118,18 @@ body {
   flex-wrap: wrap;
 }
 
+@media (min-width: 960px) {
+  .op-header {
+    flex-wrap: nowrap;
+  }
+  .op-header-actions {
+    flex-wrap: nowrap;
+  }
+  .op-header-group {
+    flex-wrap: nowrap;
+  }
+}
+
 .op-header-divider {
   width: 1px;
   height: 18px;
@@ -127,14 +142,14 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.32rem;
-  height: 32px;
-  padding: 0 0.58rem;
+  gap: 0.28rem;
+  height: 31px;
+  padding: 0 0.48rem;
   border-radius: 8px;
   border: 1px solid #28364f;
   background: #162032;
   color: #dbeafe;
-  font-size: 0.73rem;
+  font-size: 0.71rem;
   font-weight: 600;
   letter-spacing: 0;
   white-space: nowrap;
@@ -191,6 +206,22 @@ body {
   background: rgba(239, 68, 68, 0.2);
   border-color: #ef4444;
   color: #fee2e2;
+}
+
+.op-nav-btn.is-warning {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.38);
+  color: #fde68a;
+}
+
+.op-nav-btn.is-warning svg {
+  color: #fbbf24;
+}
+
+.op-nav-btn.is-warning:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.22);
+  border-color: #f59e0b;
+  color: #fef3c7;
 }
 
 .op-nav-btn:disabled {
@@ -2375,8 +2406,28 @@ body.fs-active .op-scan-input {
   font-size: 0.75rem;
   font-weight: 600;
 }
-.sc-select-btn, .sc-remove-btn, .sc-status-pill {
+.sc-select-btn, .sc-remove-btn, .sc-reset-scans-btn, .sc-status-pill {
   border-radius: 999px;
+}
+.sc-reset-scans-btn {
+  padding: 0.22rem 0.58rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  border: 1px solid rgba(245, 158, 11, 0.42);
+  background: rgba(245, 158, 11, 0.12);
+  color: #fde68a;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+.sc-reset-scans-btn:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.24);
+  border-color: #f59e0b;
+  color: #fff;
+}
+.sc-reset-scans-btn:disabled {
+  opacity: 0.32;
+  cursor: default;
 }
 .sc-body { padding: 0 1rem 1rem; }
 .sc-section-label {

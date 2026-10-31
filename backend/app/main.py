@@ -91,6 +91,29 @@ def _ensure_target_source_name() -> None:
         conn.execute(text("ALTER TABLE shipment_targets ADD COLUMN source_name VARCHAR(200)"))
 
 
+def _purge_cancelled_shipments() -> None:
+    """Eskiden CANCELLED olarak kalmış sevkiyat ve etiket kayıtlarını temizler."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(database.engine)
+    if "shipments" not in inspector.get_table_names():
+        return
+    with database.engine.begin() as conn:
+        conn.execute(text(
+            "DELETE FROM shipment_date_quotas WHERE shipment_id IN "
+            "(SELECT id FROM shipments WHERE UPPER(status) = 'CANCELLED')"
+        ))
+        conn.execute(text(
+            "DELETE FROM shipment_labels WHERE shipment_id IN "
+            "(SELECT id FROM shipments WHERE UPPER(status) = 'CANCELLED')"
+        ))
+        conn.execute(text(
+            "DELETE FROM scan_logs WHERE shipment_id IN "
+            "(SELECT id FROM shipments WHERE UPPER(status) = 'CANCELLED')"
+        ))
+        conn.execute(text("DELETE FROM shipments WHERE UPPER(status) = 'CANCELLED'"))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # WebSocket broadcast için ana event loop referansını kaydet
@@ -101,6 +124,7 @@ async def lifespan(app: FastAPI):
     _ensure_shipment_stock_note()
     _ensure_shipment_sort_order()
     _ensure_inventory_blocked()
+    _purge_cancelled_shipments()
     db = database.SessionLocal()
     try:
         backfill_missing_quotas(db)

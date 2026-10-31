@@ -12,7 +12,7 @@ from app.models import (
     ShipmentLabelStatus, ShipmentDateQuota,
 )
 from app.services.fifo_engine import calculate_fifo_groups, InventoryItem
-from app.services.fifo_quota import group_key, record_quotas
+from app.services.fifo_quota import group_key, quota_map, record_quotas
 from app.services.lookup_cache import lookup_cache
 from app.services.pool_validation import log_allocation_created
 
@@ -46,37 +46,41 @@ def _get_previously_allocated(
 ) -> dict[int, Decimal]:
     """
     Belirtilen referans için aktif/tamamlanmış tüm sevkiyatlardaki
-    inventory_label_id → toplam allocated_quantity haritasını döner.
+    inventory_label_id → toplam kullanılan/tahsis edilen miktar haritasını döner.
 
-    Bu sayede yeni sevkiyat oluşturulurken FIFO motoru:
-        kullanılabilir_miktar = toplam_stok - önceki_tahsisler
-    ile çalışır.
-
-    exclude_shipment_id: Bu sevkiyatın kendi tahsislerini hariç tut
-    (undo/yeniden hesaplama senaryoları için).
+    - PENDING satırlarda allocated_quantity kadar pay ayrılmıştır.
+    - SCANNED/PARTIAL satırlarda ise barkod bir kez okutulabildiği için etiketin
+      tamamı tüketilmiş sayılır (recalculate_shipments ile birebir aynı kural).
     """
     ref = _normalize_ref(reference)
     query = (
         db.query(
             ShipmentLabel.inventory_label_id,
-            func.sum(ShipmentLabel.allocated_quantity).label("total_allocated"),
+            ShipmentLabel.allocated_quantity,
+            ShipmentLabel.status,
+            InventoryLabel.quantity,
         )
         .join(Shipment, ShipmentLabel.shipment_id == Shipment.id)
+        .join(InventoryLabel, ShipmentLabel.inventory_label_id == InventoryLabel.id)
         .filter(
             func.upper(func.trim(Shipment.reference)) == ref.upper(),
             Shipment.status.in_([ShipmentStatus.ACTIVE, ShipmentStatus.COMPLETED]),
         )
-        .group_by(ShipmentLabel.inventory_label_id)
     )
 
     if exclude_shipment_id is not None:
         query = query.filter(ShipmentLabel.shipment_id != exclude_shipment_id)
 
-    rows = query.all()
-    return {
-        row.inventory_label_id: Decimal(str(row.total_allocated))
-        for row in rows
-    }
+    used_by_inv: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
+    for inv_id, alloc_qty, status, full_qty in query.all():
+        if status in (ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL):
+            used_by_inv[inv_id] = max(used_by_inv[inv_id], Decimal(str(full_qty)))
+        else:
+            used_by_inv[inv_id] = min(
+                Decimal(str(full_qty)),
+                used_by_inv[inv_id] + Decimal(str(alloc_qty or 0)),
+            )
+    return dict(used_by_inv)
 
 
 def create_shipment_from_reference(
@@ -243,11 +247,13 @@ def get_shipment_progress(db: Session, shipment_id: int) -> dict:
     if not shipment:
         raise ValueError("Sevkiyat bulunamadı")
 
-    all_labels = (
-        db.query(ShipmentLabel)
+    all_rows = (
+        db.query(ShipmentLabel, InventoryLabel.blocked)
+        .join(InventoryLabel, ShipmentLabel.inventory_label_id == InventoryLabel.id)
         .filter(ShipmentLabel.shipment_id == shipment_id)
         .all()
     )
+    all_labels = [sl for sl, _blk in all_rows]
 
     requested = float(shipment.requested_quantity)
     pool_f = requested
@@ -269,19 +275,10 @@ def get_shipment_progress(db: Session, shipment_id: int) -> dict:
     short_quantity = float(max(Decimal("0"), Decimal(str(shipment.requested_quantity)) - allocated))
     fully_short = short_quantity > 0 and allocated <= 0
 
-    ref_key = _normalize_ref(shipment.reference).upper()
-    ref_inv_rows = (
-        db.query(InventoryLabel.blocked, InventoryLabel.quantity)
-        .filter(
-            func.upper(func.trim(InventoryLabel.reference)) == ref_key,
-            InventoryLabel.hidden.is_(False),
-        )
-        .all()
-    )
-    blocked_label_count = sum(1 for blk, _q in ref_inv_rows if blk)
-    unblocked_label_count = sum(1 for blk, _q in ref_inv_rows if not blk)
-    blocked_quantity = float(sum((Decimal(q or 0) for blk, q in ref_inv_rows if blk), Decimal("0")))
-    unblocked_quantity = float(sum((Decimal(q or 0) for blk, q in ref_inv_rows if not blk), Decimal("0")))
+    blocked_label_count = sum(1 for _sl, blk in all_rows if blk)
+    unblocked_label_count = sum(1 for _sl, blk in all_rows if not blk)
+    blocked_quantity = float(sum((Decimal(sl.allocated_quantity or 0) for sl, blk in all_rows if blk), Decimal("0")))
+    unblocked_quantity = float(sum((Decimal(sl.allocated_quantity or 0) for sl, blk in all_rows if not blk), Decimal("0")))
 
     return {
         "shipment_id": shipment.id,
@@ -410,6 +407,9 @@ def rebalance_reference_pending(db: Session, reference: str) -> None:
     okuttuğunda, boşa çıkan diğer etiket anında öteki sevkiyata geçer ve yanlış 'Eksik' uyarısı oluşmaz.
     """
     rkey = _normalize_ref(reference).upper()
+    if not rkey:
+        return
+
     shipments = (
         db.query(Shipment)
         .filter(
@@ -435,7 +435,8 @@ def rebalance_reference_pending(db: Session, reference: str) -> None:
     consumed_ids: set[int] = set()
     for sl in scanned_rows:
         scanned_by_sid[sl.shipment_id] += Decimal(sl.scanned_quantity or 0)
-        consumed_ids.add(sl.inventory_label_id)
+        if sl.inventory_label_id is not None:
+            consumed_ids.add(sl.inventory_label_id)
 
     stock_rows = (
         db.query(InventoryLabel.id, InventoryLabel.quantity, InventoryLabel.fifo_date)
@@ -550,27 +551,66 @@ def ideal_fifo_dates(db: Session, shipments: list[Shipment]) -> dict[int, set[da
     ).filter(InventoryLabel.hidden.is_(False)).order_by(InventoryLabel.fifo_date.asc(), InventoryLabel.id.asc())
 
     stock_by_ref: dict[str, list[tuple]] = defaultdict(list)
+    active_stock_ids: set[int] = set()
     for inv_id, quantity, fifo_date, reference in stock_query.all():
         rkey = _normalize_ref(reference).upper()
         if rkey in ref_keys:
             stock_by_ref[rkey].append((inv_id, Decimal(quantity), fifo_date))
+            active_stock_ids.add(inv_id)
 
-    reserved: dict[int, Decimal] = {}
+    actual_reserved: dict[int, Decimal] = {}
+    actual_consumed: set[int] = set()
     dates: dict[int, set[datetime]] = {}
     for shipment in ordered:
         hourly = bool(shipment.hourly_fifo)
         rkey = _normalize_ref(shipment.reference).upper()
+        base_stock = stock_by_ref.get(rkey, [])
+        requested = Decimal(shipment.requested_quantity)
         own = scanned_by_shipment.get(shipment.id, [])
-        own_ids = {inv.id for _sl, inv in own if inv is not None}
-        other_consumed = consumed_ids - own_ids
-        allocations = _allocate_remaining(
-            stock_by_ref.get(rkey, []),
-            Decimal(shipment.requested_quantity),
+
+        # Bu sevkiyatın kendi okutulmuş etiketleri yeni stok Excel'inde düşülmüş (hidden=True)
+        # olsa bile kendi ideal havuzunda yer almalıdır ki en eski tarih yanlışlıkla FIFO dışı sayılmasın.
+        extra_own_stock: list[tuple] = []
+        for sl, inv in own:
+            if inv is None:
+                continue
+            if inv.id not in active_stock_ids and inv.fifo_date is not None:
+                qty = Decimal(sl.scanned_quantity or inv.quantity or 0)
+                if qty > 0:
+                    extra_own_stock.append((inv.id, qty, inv.fifo_date))
+
+        if extra_own_stock:
+            ref_stock = sorted(base_stock + extra_own_stock, key=lambda x: (x[2], x[0]))
+        else:
+            ref_stock = base_stock
+
+        # Adım A: Önceki sevkiyatların gerçek tüketimi/rezervasyonu düşüldükten sonra
+        # bu sevkiyatın ideal olarak alması gereken FIFO tarihleri:
+        temp_reserved = dict(actual_reserved)
+        ideal_allocs = _allocate_remaining(
+            ref_stock,
+            requested,
             hourly,
-            other_consumed,
-            reserved,
+            actual_consumed,
+            temp_reserved,
         )
-        dates[shipment.id] = {group_key(fifo_date, hourly) for _id, _qty, fifo_date in allocations}
+        dates[shipment.id] = {group_key(fifo_date, hourly) for _id, _qty, fifo_date in ideal_allocs}
+
+        # Adım B: Sonraki sevkiyatlar için bu sevkiyatın gerçek okutmalarını ve kalan tahsisini kilitle:
+        scanned_total = Decimal("0")
+        for sl, inv in own:
+            scanned_total += Decimal(sl.scanned_quantity or 0)
+            if inv is not None:
+                actual_consumed.add(inv.id)
+        rem = max(Decimal("0"), requested - scanned_total)
+        if rem > 0:
+            _allocate_remaining(
+                base_stock,
+                rem,
+                hourly,
+                actual_consumed,
+                actual_reserved,
+            )
     return dates
 
 
@@ -727,40 +767,15 @@ def _build_shipments_progress_batch(db: Session, shipments: list[Shipment]) -> l
             ShipmentLabel.allocated_quantity,
             ShipmentLabel.scanned_quantity,
             ShipmentLabel.status,
+            InventoryLabel.blocked,
         )
+        .join(InventoryLabel, ShipmentLabel.inventory_label_id == InventoryLabel.id)
         .filter(ShipmentLabel.shipment_id.in_(sids))
         .all()
     )
     labels_by_sid: dict[int, list] = defaultdict(list)
-    for sid, alloc_q, scan_q, st in label_rows:
-        labels_by_sid[sid].append((alloc_q, scan_q, st))
-
-    ref_keys = {_normalize_ref(s.reference).upper() for s in shipments}
-    inv_stats_by_ref: dict[str, list[int | Decimal]] = {}
-    if ref_keys:
-        inv_Query = db.query(
-            InventoryLabel.reference,
-            InventoryLabel.blocked,
-            InventoryLabel.quantity,
-        ).filter(InventoryLabel.hidden.is_(False))
-        if len(ref_keys) <= 400:
-            inv_Query = inv_Query.filter(func.upper(func.trim(InventoryLabel.reference)).in_(ref_keys))
-        for ref_val, blk, qty in inv_Query.all():
-            rk = _normalize_ref(ref_val).upper()
-            if rk not in ref_keys:
-                continue
-            stat = inv_stats_by_ref.get(rk)
-            if stat is None:
-                # [blocked_cnt, unblocked_cnt, blocked_qty, unblocked_qty]
-                stat = [0, 0, Decimal("0"), Decimal("0")]
-                inv_stats_by_ref[rk] = stat
-            q_dec = Decimal(qty or 0)
-            if blk:
-                stat[0] = int(stat[0]) + 1
-                stat[2] = Decimal(stat[2]) + q_dec
-            else:
-                stat[1] = int(stat[1]) + 1
-                stat[3] = Decimal(stat[3]) + q_dec
+    for sid, alloc_q, scan_q, st, blk in label_rows:
+        labels_by_sid[sid].append((alloc_q, scan_q, st, bool(blk)))
 
     items_out: list[dict] = []
     for shipment in shipments:
@@ -769,23 +784,25 @@ def _build_shipments_progress_batch(db: Session, shipments: list[Shipment]) -> l
         pool_f = requested
 
         scanned_qty = sum(
-            (Decimal(scan_q or 0) for _alloc_q, scan_q, st in s_labels
+            (Decimal(scan_q or 0) for _alloc_q, scan_q, st, _blk in s_labels
              if st in (ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL)),
             Decimal("0"),
         )
         scanned_labels_count = sum(
-            1 for _alloc_q, _scan_q, st in s_labels
+            1 for _alloc_q, _scan_q, st, _blk in s_labels
             if st in (ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL)
         )
         scanned_f = float(scanned_qty)
         remaining_target = max(0.0, requested - scanned_f)
         progress = (scanned_f / requested * 100) if requested > 0 else 0.0
-        allocated = sum((Decimal(alloc_q or 0) for alloc_q, _scan_q, _st in s_labels), Decimal("0"))
+        allocated = sum((Decimal(alloc_q or 0) for alloc_q, _scan_q, _st, _blk in s_labels), Decimal("0"))
         short_quantity = float(max(Decimal("0"), Decimal(str(shipment.requested_quantity)) - allocated))
         fully_short = short_quantity > 0 and allocated <= 0
 
-        rk = _normalize_ref(shipment.reference).upper()
-        st_ref = inv_stats_by_ref.get(rk, [0, 0, Decimal("0"), Decimal("0")])
+        blk_cnt = sum(1 for _alloc_q, _scan_q, _st, blk in s_labels if blk)
+        unblk_cnt = sum(1 for _alloc_q, _scan_q, _st, blk in s_labels if not blk)
+        blk_qty = sum((Decimal(alloc_q or 0) for alloc_q, _scan_q, _st, blk in s_labels if blk), Decimal("0"))
+        unblk_qty = sum((Decimal(alloc_q or 0) for alloc_q, _scan_q, _st, blk in s_labels if not blk), Decimal("0"))
 
         items_out.append({
             "shipment_id": shipment.id,
@@ -802,10 +819,10 @@ def _build_shipments_progress_batch(db: Session, shipments: list[Shipment]) -> l
             "is_complete": shipment.status == ShipmentStatus.COMPLETED,
             "stock_note": "Eksik" if fully_short else None,
             "short_quantity": short_quantity,
-            "blocked_label_count": int(st_ref[0]),
-            "unblocked_label_count": int(st_ref[1]),
-            "blocked_quantity": float(st_ref[2]),
-            "unblocked_quantity": float(st_ref[3]),
+            "blocked_label_count": blk_cnt,
+            "unblocked_label_count": unblk_cnt,
+            "blocked_quantity": float(blk_qty),
+            "unblocked_quantity": float(unblk_qty),
         })
 
     return items_out
