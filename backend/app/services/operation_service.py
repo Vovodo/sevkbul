@@ -337,7 +337,7 @@ def get_shipment_manifest(
     scanned_by_sid_date: dict[int, dict[datetime, list[ShipmentLabel]]] = defaultdict(lambda: defaultdict(list))
     scanned_sum_by_sid_date: dict[int, dict[datetime, Decimal]] = defaultdict(lambda: defaultdict(lambda: Decimal("0")))
     blocked_by_sid_date: dict[int, dict[datetime, list[InventoryLabel]]] = defaultdict(lambda: defaultdict(list))
-    blocked_pending_by_sid: dict[int, list[InventoryLabel]] = defaultdict(list)
+    blocked_all_by_sid: dict[int, list[tuple[ShipmentLabel, InventoryLabel]]] = defaultdict(list)
     refs_with_scans: set[str] = set()
     for sl in all_sl_rows:
         inv = sl.inventory_label
@@ -347,8 +347,8 @@ def get_shipment_manifest(
         k = group_key(inv.fifo_date, h)
         if bool(getattr(inv, "blocked", False)) and not bool(getattr(inv, "hidden", False)):
             blocked_by_sid_date[sl.shipment_id][k].append(inv)
-            if sl.status == ShipmentLabelStatus.PENDING and Decimal(inv.quantity) > 0:
-                blocked_pending_by_sid[sl.shipment_id].append(inv)
+            if Decimal(inv.quantity) > 0:
+                blocked_all_by_sid[sl.shipment_id].append((sl, inv))
         if sl.status in (ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL):
             scanned_by_sid_date[sl.shipment_id][k].append(sl)
             scanned_sum_by_sid_date[sl.shipment_id][k] += Decimal(sl.scanned_quantity or 0)
@@ -380,11 +380,12 @@ def get_shipment_manifest(
         blocked_labels = [
             {
                 "label": r.label,
-                "quantity": float(r.quantity),
+                "quantity": float(sl_row.allocated_quantity or r.quantity),
                 "fifo_time": r.fifo_date.strftime("%d.%m.%Y %H:%M"),
                 "blocked": True,
+                "scanned": sl_row.status in (ShipmentLabelStatus.SCANNED, ShipmentLabelStatus.PARTIAL),
             }
-            for r in sorted(blocked_pending_by_sid.get(s.id, []), key=lambda x: (x.fifo_date, x.id))
+            for sl_row, r in sorted(blocked_all_by_sid.get(s.id, []), key=lambda x: (x[1].fifo_date, x[1].id))
         ]
 
         items = []

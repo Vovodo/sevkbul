@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { Download, Globe, Printer, TriangleAlert, X } from 'lucide-react';
+import { Download, Globe, Lock, Printer, TriangleAlert, X } from 'lucide-react';
 import { api, ShipmentManifest } from '../api';
 import { useLiveUpdates } from '../useLiveUpdates';
 import Logo from './Logo';
@@ -7,6 +7,7 @@ import Logo from './Logo';
 interface ManifestModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onOpenBlockedPrint?: (groupId: number | 'all') => void;
 }
 
 interface GroupedManifest {
@@ -19,7 +20,7 @@ interface GroupedManifest {
   completedRefs: number;
 }
 
-export default function ManifestModal({ isOpen, onClose }: ManifestModalProps) {
+export default function ManifestModal({ isOpen, onClose, onOpenBlockedPrint }: ManifestModalProps) {
   const [manifests, setManifests] = useState<ShipmentManifest[]>([]);
   const [selectedGroupId, setSelectedGroupId] = useState<number | 'all'>('all');
   const [loading, setLoading] = useState(false);
@@ -143,6 +144,17 @@ export default function ManifestModal({ isOpen, onClose }: ManifestModalProps) {
             </div>
           </div>
           <div className="manifest-actions">
+            {onOpenBlockedPrint && (
+              <button
+                type="button"
+                className="op-btn secondary compact"
+                onClick={() => onOpenBlockedPrint(selectedGroupId)}
+                style={{ fontWeight: 700, borderColor: '#f59e0b', color: '#fde68a', background: 'rgba(245, 158, 11, 0.14)' }}
+                title="Bu sevkiyatın (veya tüm sevkiyatların) hesaplanan blokajlı etiketlerini yazdır"
+              >
+                <Lock size={14} /> Blokajlıları Yazdır
+              </button>
+            )}
             <a
               className="op-btn secondary compact"
               href={api.exportManifestExcelUrl(selectedGroupId !== 'all' ? selectedGroupId : null)}

@@ -737,3 +737,547 @@ class TestStockReuploadAfterScans:
         assert client.post("/api/shipment/scan", json={"label": "L-SH-2", "group_id": g1_id}).json()["is_complete"] is True
         assert client.post("/api/shipment/scan", json={"label": "L-SH-3", "group_id": g2_id}).json()["is_complete"] is True
 
+
+class TestCustomExcelHeadersSettings:
+    """
+    Ayarlar bölümünden Excel sütun üst başlıklarının özelleştirilmesi,
+    farklı firma Excel formatlarının (örn: OLUSTURMATARIHI, KOLI_BARKODU, STOK_KODU)
+    tanınması, örnek Excel analizi ve varsayılanlara dönüş testleri.
+    """
+
+    @staticmethod
+    def _build_wb(headers: list[str], rows: list[tuple]) -> bytes:
+        wb = Workbook()
+        ws = wb.active
+        ws.append(headers)
+        for r in rows:
+            ws.append(list(r))
+        buf = BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    def test_custom_excel_headers_save_import_inspect_and_reset(self, client):
+        # 1) Varsayılan ayarları kontrol et
+        res_get = client.get("/api/inventory/excel-headers")
+        assert res_get.status_code == 200
+        defaults = res_get.json()
+        assert defaults["label_header"] == "ETİKET"
+        assert defaults["fifo_date_header"] == "X98FIFO_TARIH"
+
+        # 2) Başka bir firmanın tamamen farklı sütun başlıklarını kaydet
+        custom_cfg = {
+            "label_header": "KOLI_BARKODU",
+            "reference_header": "STOK_KODU",
+            "quantity_header": "KOLI_ADET",
+            "fifo_date_header": "OLUSTURMATARIHI",
+            "blocked_header": "KARANTINA",
+            "shipment_reference_header": "MALZEME_NO",
+            "shipment_quantity_header": "SIPARIS_ADET",
+        }
+        res_put = client.put("/api/inventory/excel-headers", json=custom_cfg)
+        assert res_put.status_code == 200
+        assert res_put.json()["fifo_date_header"] == "OLUSTURMATARIHI"
+
+        # 3) Hem OLUSTURMATARIHI hem X98FIFO_TARIH içeren bir Excel yüklendiğinde
+        # sistemin ayarlardaki OLUSTURMATARIHI sütununu baz aldığını doğrula!
+        excel_bytes = self._build_wb(
+            [
+                "KOLI_BARKODU",
+                "STOK_KODU",
+                "KOLI_ADET",
+                "DURUM",
+                "OLUSTURMATARIHI",
+                "SEVKTARIHI",
+                "X98FIFO_TARIH",
+                "KARANTINA",
+            ],
+            [
+                ("BRK-901", "MAT-100", 40, "OK", "02.04.2026 09:00", "10.04.2026", "25.12.2026 08:00", "DOĞRU"),
+                ("BRK-902", "MAT-100", 40, "OK", "05.04.2026 09:00", "10.04.2026", "26.12.2026 08:00", "YANLIŞ"),
+            ],
+        )
+
+        # Örnek Excel başlık inceleme (inspect) uç noktasını doğrula
+        ins_res = client.post(
+            "/api/inventory/excel-headers/inspect",
+            files={"file": ("ornek.xlsx", excel_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert ins_res.status_code == 200
+        ins_data = ins_res.json()
+        assert "OLUSTURMATARIHI" in ins_data["headers"]
+        assert ins_data["matched_stock_columns"]["fifo_date"] == "OLUSTURMATARIHI"
+        assert ins_data["matched_stock_columns"]["label"] == "KOLI_BARKODU"
+        assert ins_data["matched_stock_columns"]["blocked"] == "KARANTINA"
+
+        # Stok Excel'ini içeri aktar
+        imp_res = client.post(
+            "/api/inventory/import/stock?replace=true",
+            files={"file": ("yeni_firma_stok.xlsx", excel_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert imp_res.status_code == 200
+        imp_body = imp_res.json()
+        assert imp_body["successful"] == 2
+        # FIFO tarihi X98FIFO_TARIH (25.12.2026) değil, OLUSTURMATARIHI (02.04.2026) olmalı!
+        assert imp_body["preview_rows"][0]["fifo_date"] == "02.04.2026 09:00"
+
+        # KARANTINA sütunundaki DOĞRU değeri blokajlı olarak algılanmalı
+        stats = client.get("/api/inventory/stats").json()
+        assert stats["blocked_labels"] == 1
+
+        # 4) Özel başlıkları içermeyen eski bir Excel yüklendiğinde eksik kolon uyarısı dönmeli
+        wrong_excel = self._build_wb(
+            ["ETİKET", "REFERANS", "MİKTAR", "X98FIFO_TARIH"],
+            [("E1", "R1", 10, "01.05.2026 08:00")],
+        )
+        bad_imp = client.post(
+            "/api/inventory/import/stock?replace=true",
+            files={"file": ("eski.xlsx", wrong_excel, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert bad_imp.status_code == 400
+        assert "OLUSTURMATARIHI" in bad_imp.json()["detail"]
+
+        # 5) Özel Sevkiyat Exceli başlıklarıyla (MALZEME_NO, SIPARIS_ADET) hedef yükleme
+        ship_excel = self._build_wb(
+            ["SIRA", "MALZEME_NO", "ACIKLAMA", "SIPARIS_ADET"],
+            [(1, "MAT-100", "Özel Sipariş", 40)],
+        )
+        ship_imp = client.post(
+            "/api/shipment/targets/import",
+            files={"file": ("siparis.xlsx", ship_excel, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert ship_imp.status_code == 200
+        assert ship_imp.json()["successful"] == 1
+
+        # Sevkiyatı oluştur ve FIFO tarihinin 02.04.2026 olduğunu doğrula
+        client.post("/api/shipment/find")
+        manifest = client.get("/api/shipment/manifest").json()
+        assert manifest[0]["items"][0]["fifo_group_date"] == "02.04.2026"
+
+        # 6) Varsayılanlara sıfırla
+        rst_res = client.post("/api/inventory/excel-headers/reset")
+        assert rst_res.status_code == 200
+        assert rst_res.json()["fifo_date_header"] == "X98FIFO_TARIH"
+        assert rst_res.json()["label_header"] == "ETİKET"
+
+    def test_active_shipments_with_scans_react_properly_when_headers_change_and_new_stock_uploaded(self, client):
+        """
+        Senaryo:
+        1) Varsayılan başlıklarla (ETİKET, REFERANS, MİKTAR, X98FIFO_TARIH, BLOKAJ) stok yüklenir.
+        2) 2 sevkiyat (S1: 60 adet, S2: 30 adet) oluşturulur, S1 içinde 1 etiket (30 adet) okutulur.
+        3) Aktif sevkiyatlar ve okutmalar varken üst başlıklar tamamen değiştirilir
+           (BARKOD_NO, URUN_KODU, ADET, OLUSTURMATARIHI, KALITE_BLOKAJ).
+        4) Başlıklar değiştiği anda mevcut sevkiyatların/okutmaların bozulmadığı ve okutmanın çalıştığı doğrulanır.
+        5) Yeni üst başlıklara uygun yeni bir Stok Exceli (replace=True ve replace=False) yüklendiğinde:
+           - Önceki okutmanın korunduğu,
+           - Kalan ihtiyacın yeni OLUSTURMATARIHI sütununa göre otomatik yeniden hesaplandığı,
+           - Yeni etiketlerin sorunsuz okutulabildiği doğrulanır!
+        """
+        stock_default = self._build_wb(
+            ["ETİKET", "REFERANS", "MİKTAR", "X98FIFO_TARIH", "BLOKAJ"],
+            [
+                ("ACT-L1", "REF-ACT", 30, "10.05.2026 08:00", "YANLIŞ"),
+                ("ACT-L2", "REF-ACT", 30, "15.05.2026 08:00", "YANLIŞ"),
+                ("ACT-L3", "REF-ACT", 30, "20.05.2026 08:00", "YANLIŞ"),
+            ],
+        )
+        client.post(
+            "/api/inventory/import/stock?replace=true",
+            files={"file": ("s1.xlsx", stock_default, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+
+        # S1 (60 adet) ve S2 (30 adet) oluştur
+        client.post("/api/shipment/targets", json={"reference": "REF-ACT", "target_quantity": 60})
+        client.post("/api/shipment/find")
+        client.post("/api/shipment/targets", json={"reference": "REF-ACT", "target_quantity": 30})
+        client.post("/api/shipment/find")
+
+        groups = client.get("/api/shipment/groups").json()
+        g1_id, g2_id = groups[0]["group_id"], groups[1]["group_id"]
+
+        # S1 içinde ACT-L1 (10.05.2026, 30 adet) okut
+        sc1 = client.post("/api/shipment/scan", json={"label": "ACT-L1", "group_id": g1_id}).json()
+        assert sc1["success"] is True
+        assert sc1["scanned_quantity"] == 30.0
+
+        # Şimdi aktif sevkiyatlar varken üst başlıkları değiştir!
+        new_headers_cfg = {
+            "label_header": "BARKOD_NO",
+            "reference_header": "URUN_KODU",
+            "quantity_header": "ADET",
+            "fifo_date_header": "OLUSTURMATARIHI",
+            "blocked_header": "KALITE_BLOKAJ",
+            "shipment_reference_header": "SIPARIS_URUN",
+            "shipment_quantity_header": "SIPARIS_MIKTAR",
+        }
+        assert client.put("/api/inventory/excel-headers", json=new_headers_cfg).status_code == 200
+
+        # Başlıklar değiştiği anda mevcut sevkiyatlar ve okutmalar hiç bozulmamış olmalı!
+        g_mid = client.get("/api/shipment/groups").json()
+        assert len(g_mid) == 2
+        assert g_mid[0]["scanned_quantity"] == 30.0
+        assert g_mid[1]["scanned_quantity"] == 0.0
+
+        # Şimdi YENİ ÜST BAŞLIKLARA uygun yeni bir Stok Exceli (replace=True) yükle!
+        # Bu Excel'de hem OLUSTURMATARIHI hem X98FIFO_TARIH olsun; ayrıca 12.05.2026 tarihli ACT-L-NEW eklensin!
+        stock_custom = self._build_wb(
+            ["BARKOD_NO", "URUN_KODU", "ADET", "OLUSTURMATARIHI", "X98FIFO_TARIH", "KALITE_BLOKAJ"],
+            [
+                ("ACT-L1", "REF-ACT", 30, "10.05.2026 08:00", "29.12.2026 08:00", "YANLIŞ"),
+                ("ACT-L-NEW", "REF-ACT", 30, "12.05.2026 08:00", "29.12.2026 08:00", "DOĞRU"),
+                ("ACT-L2", "REF-ACT", 30, "15.05.2026 08:00", "29.12.2026 08:00", "YANLIŞ"),
+                ("ACT-L3", "REF-ACT", 30, "20.05.2026 08:00", "29.12.2026 08:00", "YANLIŞ"),
+            ],
+        )
+        imp_custom = client.post(
+            "/api/inventory/import/stock?replace=true",
+            files={"file": ("s2_custom.xlsx", stock_custom, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert imp_custom.status_code == 200
+        assert imp_custom.json()["successful"] == 4
+
+        # S1'in kalan 30 adedi OLUSTURMATARIHI sütunundaki 12.05.2026 (ACT-L-NEW, Blokajlı) etiketine bağlanmalı!
+        m1 = client.get(f"/api/shipment/manifest?group_id={g1_id}").json()[0]
+        m1_dates = {d["fifo_group_date"]: d for d in m1["items"]}
+        assert set(m1_dates.keys()) == {"10.05.2026", "12.05.2026"}
+        assert m1_dates["10.05.2026"]["scanned_quantity"] == 30.0
+        assert m1_dates["12.05.2026"]["quantity"] == 30.0
+        assert m1_dates["12.05.2026"]["has_blocked"] is True
+        assert m1["blocked_label_count"] == 1
+
+        # S2'nin 30 adedi ise 20.05.2026 yerine 15.05.2026 (ACT-L2) tarihine kaymalı!
+        m2 = client.get(f"/api/shipment/manifest?group_id={g2_id}").json()[0]
+        m2_dates = {d["fifo_group_date"]: d for d in m2["items"]}
+        assert set(m2_dates.keys()) == {"15.05.2026"}
+
+        # Şimdi replace=False (+ Stok Güncelle / Ekle) ile aynı özel başlıklarla 01.05.2026 tarihli
+        # daha eski 60 adetlik stok (ACT-OLD-1, ACT-OLD-2) ekleyelim!
+        stock_append = self._build_wb(
+            ["BARKOD_NO", "URUN_KODU", "ADET", "OLUSTURMATARIHI", "KALITE_BLOKAJ"],
+            [
+                ("ACT-OLD-1", "REF-ACT", 30, "01.05.2026 08:00", "YANLIŞ"),
+                ("ACT-OLD-2", "REF-ACT", 30, "01.05.2026 09:00", "YANLIŞ"),
+            ],
+        )
+        imp_append = client.post(
+            "/api/inventory/import/stock?replace=false",
+            files={"file": ("s3_append.xlsx", stock_append, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert imp_append.status_code == 200
+
+        # S1'in kalan 30 adedi 01.05.2026'ya geçmeli ve önceki 10.05.2026 okutması FIFO dışı (outside_fifo=True) olmalı!
+        m1_after = client.get(f"/api/shipment/manifest?group_id={g1_id}").json()[0]
+        m1_after_dates = {d["fifo_group_date"]: d for d in m1_after["items"]}
+        assert set(m1_after_dates.keys()) == {"01.05.2026", "10.05.2026"}
+        assert m1_after_dates["01.05.2026"]["outside_fifo"] is False
+        assert m1_after_dates["10.05.2026"]["outside_fifo"] is True
+
+        # S1 için ACT-OLD-1 (01.05.2026) okutulduğunda S1 tamamlanmalı!
+        sc_done = client.post("/api/shipment/scan", json={"label": "ACT-OLD-1", "group_id": g1_id}).json()
+        assert sc_done["success"] is True
+        assert sc_done["is_complete"] is True
+
+    def test_comma_separated_fallback_headers_and_priority_order(self, client):
+        """
+        Kullanıcı virgülle ayrılmış alternatif başlıklar (örn: 'URETIM_TARIHI, OLUSTURMATARIHI, X98FIFO_TARIH')
+        tanımladığında sistemin hem alternatifleri kabul ettiğini hem de yazılan öncelik sırasına uyduğunu doğrular.
+        """
+        cfg = {
+            "label_header": "BARKOD, ETİKET",
+            "reference_header": "STOK_KODU, REFERANS",
+            "quantity_header": "ADET, MİKTAR",
+            "fifo_date_header": "URETIM_TARIHI, OLUSTURMATARIHI, X98FIFO_TARIH",
+            "blocked_header": "KARANTINA, BLOKAJ",
+            "shipment_reference_header": "STOK_KODU, REFERANS",
+            "shipment_quantity_header": "ADET, MİKTAR",
+        }
+        assert client.put("/api/inventory/excel-headers", json=cfg).status_code == 200
+
+        # Hem OLUSTURMATARIHI (2. tercih) hem X98FIFO_TARIH (3. tercih) içeren Excel'de
+        # 2. tercih olan OLUSTURMATARIHI seçilmeli!
+        wb_bytes = self._build_wb(
+            ["BARKOD", "STOK_KODU", "ADET", "X98FIFO_TARIH", "OLUSTURMATARIHI"],
+            [("B-1", "S-1", 25, "20.10.2026 08:00", "04.03.2026 11:30")],
+        )
+        res = client.post(
+            "/api/inventory/import/stock?replace=true",
+            files={"file": ("multi.xlsx", wb_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert res.status_code == 200
+        assert res.json()["preview_rows"][0]["fifo_date"] == "04.03.2026 11:30"
+
+    def test_turkish_characters_case_spaces_and_shifted_header_row_resilience(self, client):
+        """
+        1) Ayarlarda küçük harf, Türkçe karakter ve boşluklu başlık ('üretim tarihi', 'etiket numarası')
+           yazıldığında Excel'deki 'URETIM_TARIHI' / 'ETIKET_NUMARASI' ile eşleşmesi.
+        2) Excel'in 1. satırında rapor başlığı ('STOK RAPORU'), 2. satırında boşluk ve 3. satırında
+           gerçek sütun üst başlıkları olduğunda sistemin 3. satırı otomatik tespit etmesi.
+        """
+        cfg = {
+            "label_header": "etiket numarası",
+            "reference_header": "ürün referansı",
+            "quantity_header": "koli miktarı",
+            "fifo_date_header": "üretim tarihi",
+            "blocked_header": "kalite blokaj",
+            "shipment_reference_header": "ürün referansı",
+            "shipment_quantity_header": "sevkiyat miktarı",
+        }
+        assert client.put("/api/inventory/excel-headers", json=cfg).status_code == 200
+
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["FABRİKA GÜNLÜK STOK RAPORU - 2026", None, None, None, None])
+        ws.append([None, None, None, None, None])
+        ws.append(["ETIKET_NUMARASI", "URUN_REFERANSI", "KOLI_MIKTARI", "URETIM_TARIHI", "KALITE_BLOKAJ"])
+        ws.append(["TR-001", "REF-TR", 50, "14.07.2026 15:45", "DOĞRU"])
+        buf = BytesIO()
+        wb.save(buf)
+
+        res = client.post(
+            "/api/inventory/import/stock?replace=true",
+            files={"file": ("shifted.xlsx", buf.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert res.status_code == 200
+        body = res.json()
+        assert body["successful"] == 1
+        assert body["preview_rows"][0]["label"] == "TR-001"
+        assert body["preview_rows"][0]["fifo_date"] == "14.07.2026 15:45"
+        assert client.get("/api/inventory/stats").json()["blocked_labels"] == 1
+
+    def test_optional_blocked_header_empty_disables_blokaj_and_custom_enables_it(self, client):
+        """
+        Blokaj üst başlığı opsiyoneldir: boş bırakıldığında Excel'de BLOKAJ=DOĞRU olsa bile
+        hiçbir etiket blokajlı sayılmaz; özel bir sütun adı yazıldığında o sütun okunur.
+        """
+        cfg = {
+            "label_header": "ETİKET",
+            "reference_header": "REFERANS",
+            "quantity_header": "MİKTAR",
+            "fifo_date_header": "X98FIFO_TARIH",
+            "blocked_header": "",
+            "shipment_reference_header": "REFERANS",
+            "shipment_quantity_header": "MİKTAR",
+        }
+        assert client.put("/api/inventory/excel-headers", json=cfg).status_code == 200
+
+        wb_bytes = self._build_wb(
+            ["ETİKET", "REFERANS", "MİKTAR", "X98FIFO_TARIH", "BLOKAJ"],
+            [("BLK-OFF-1", "REF-B", 30, "01.05.2026 08:00", "DOĞRU")],
+        )
+        res = client.post(
+            "/api/inventory/import/stock?replace=true",
+            files={"file": ("b_off.xlsx", wb_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert res.status_code == 200
+        assert client.get("/api/inventory/stats").json()["blocked_labels"] == 0
+
+    def test_negative_validation_prevents_empty_or_duplicate_column_headers_and_rejects_wrong_shipment_headers(self, client):
+        """
+        Negatif ve güvenlik testleri:
+        1) Zorunlu başlıklardan biri boş bırakıldığında 400 dönmeli.
+        2) İki farklı alana aynı sütun başlığı verildiğinde (çakışma) 400 dönmeli.
+        3) Sevkiyat Excel'i için Referans ve Miktar'a aynı başlık verildiğinde 400 dönmeli.
+        4) Özel Sevkiyat Excel'i başlığı tanımlıyken yanlış başlıklı Sevkiyat Excel'i yüklendiğinde
+           'başlıksız' sanıp kabul etmemeli, 400 (Eksik kolonlar) dönmeli!
+        """
+        # 1) Boş zorunlu başlık
+        bad_empty = {
+            "label_header": "ETİKET",
+            "reference_header": "REFERANS",
+            "quantity_header": "MİKTAR",
+            "fifo_date_header": "   ",
+            "blocked_header": "BLOKAJ",
+            "shipment_reference_header": "REFERANS",
+            "shipment_quantity_header": "MİKTAR",
+        }
+        assert client.put("/api/inventory/excel-headers", json=bad_empty).status_code == 400
+
+        # 2) Stok başlıklarında çakışma (Etiket ve Referans aynı)
+        bad_dup_stock = {
+            "label_header": "URUN_KODU",
+            "reference_header": "urun kodu",
+            "quantity_header": "MİKTAR",
+            "fifo_date_header": "X98FIFO_TARIH",
+            "blocked_header": "BLOKAJ",
+            "shipment_reference_header": "REFERANS",
+            "shipment_quantity_header": "MİKTAR",
+        }
+        res_dup = client.put("/api/inventory/excel-headers", json=bad_dup_stock)
+        assert res_dup.status_code == 400
+        assert "aynı sütun başlığına" in res_dup.json()["detail"]
+
+        # 3) Sevkiyat başlıklarında çakışma
+        bad_dup_ship = {
+            "label_header": "ETİKET",
+            "reference_header": "REFERANS",
+            "quantity_header": "MİKTAR",
+            "fifo_date_header": "X98FIFO_TARIH",
+            "blocked_header": "BLOKAJ",
+            "shipment_reference_header": "SIPARIS_SUTUNU",
+            "shipment_quantity_header": "SIPARIS_SUTUNU",
+        }
+        assert client.put("/api/inventory/excel-headers", json=bad_dup_ship).status_code == 400
+
+        # 4) Özel Sevkiyat Excel'i başlıkları aktifken yanlış başlıklı Sevkiyat Excel'i yükleme
+        valid_custom_ship = {
+            "label_header": "ETİKET",
+            "reference_header": "REFERANS",
+            "quantity_header": "MİKTAR",
+            "fifo_date_header": "X98FIFO_TARIH",
+            "blocked_header": "BLOKAJ",
+            "shipment_reference_header": "OZEL_MALZEME_KODU",
+            "shipment_quantity_header": "OZEL_SEVK_ADETI",
+        }
+        assert client.put("/api/inventory/excel-headers", json=valid_custom_ship).status_code == 200
+
+        wrong_ship_wb = self._build_wb(
+            ["ESKI_REFERANS", "ESKI_MIKTAR"],
+            [("REF-100", 120)],
+        )
+        bad_ship_imp = client.post(
+            "/api/shipment/targets/import",
+            files={"file": ("yanlis_sevk.xlsx", wrong_ship_wb, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert bad_ship_imp.status_code == 400
+        assert "OZEL_MALZEME_KODU" in bad_ship_imp.json()["detail"]
+
+    def test_25_column_real_erp_excel_with_special_punctuation_headers_and_iso_dates(self, client):
+        """
+        Gerçek 25 sütunlu ERP stok Excel'i testi:
+        ['Etiket', 'Stok No', 'Tanım', 'Etiket Tarihi', 'Süre', 'Depo', 'Miktar', 'ÖB',
+         'Eksilme Miktarı', 'Cek. Miktar', 'Kalan Miktar', 'Tedarikçi Etiketi', 'Palet Etiketi',
+         'Tedarikçi Lotu', 'Etk', 'Satınalma Emri', 'Firma', 'Paket Miktarı', 'Kabul Tarihi',
+         'Referans', 'İrsaliye/Sevk Belgesi', 'Sevk/Teslim Tarihi', 'Kalite', 'Bloke mi?', 'Amerika Referans']
+        - Noktalama işaretli başlıklar ('Bloke mi?', 'Sevk/Teslim Tarihi', 'Cek. Miktar')
+        - ISO tarih formatı ('2026-05-01 08:30' -> 01.05.2026 olarak doğru parse edilmeli, 05.01.2026 olmamalı!)
+        - 'Bloke mi?' sütunundaki 'Evet', 'Bloke', 'E' değerlerinin blokajlı algılanması.
+        """
+        erp_headers = [
+            "Etiket", "Stok No", "Tanım", "Etiket Tarihi", "Süre", "Depo", "Miktar", "ÖB",
+            "Eksilme Miktarı", "Cek. Miktar", "Kalan Miktar", "Tedarikçi Etiketi", "Palet Etiketi",
+            "Tedarikçi Lotu", "Etk", "Satınalma Emri", "Firma", "Paket Miktarı", "Kabul Tarihi",
+            "Referans", "İrsaliye/Sevk Belgesi", "Sevk/Teslim Tarihi", "Kalite", "Bloke mi?", "Amerika Referans",
+        ]
+        cfg = {
+            "label_header": "Tedarikçi Etiketi",
+            "reference_header": "Stok No",
+            "quantity_header": "Kalan Miktar",
+            "fifo_date_header": "Kabul Tarihi",
+            "blocked_header": "Bloke mi?",
+            "shipment_reference_header": "Stok No",
+            "shipment_quantity_header": "Paket Miktarı",
+        }
+        assert client.put("/api/inventory/excel-headers", json=cfg).status_code == 200
+
+        row1 = [
+            "E-INTERNAL-1", "STK-7700", "Parça A", "2026-06-10 08:00", 10, "D1", 100, "AD",
+            10, 0, 90, "TED-BAR-001", "PAL-1",
+            "LOT-1", "1", "PO-1", "F1", 90, "2026-05-01 08:30",
+            "ESKI-REF-1", "IRS-1", "2026-05-02", "OK", "Evet", "US-REF-1",
+        ]
+        row2 = [
+            "E-INTERNAL-2", "STK-7700", "Parça A", "2026-06-12 08:00", 10, "D1", 100, "AD",
+            0, 0, 100, "TED-BAR-002", "PAL-2",
+            "LOT-2", "1", "PO-1", "F1", 100, "2026-05-04 14:15",
+            "ESKI-REF-1", "IRS-2", "2026-05-05", "OK", "Hayır", "US-REF-1",
+        ]
+        wb_bytes = self._build_wb(erp_headers, [tuple(row1), tuple(row2)])
+
+        imp = client.post(
+            "/api/inventory/import/stock?replace=true",
+            files={"file": ("erp25.xlsx", wb_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert imp.status_code == 200
+        body = imp.json()
+        assert body["successful"] == 2
+        assert body["preview_rows"][0]["label"] == "TED-BAR-001"
+        assert body["preview_rows"][0]["reference"] == "STK-7700"
+        assert body["preview_rows"][0]["quantity"] == 90.0
+        assert body["preview_rows"][0]["fifo_date"] == "01.05.2026 08:30"
+
+        stats = client.get("/api/inventory/stats").json()
+        assert stats["blocked_labels"] == 1
+        assert stats["unblocked_labels"] == 1
+
+
+class TestMiniS3StorageAndAutoCleanup:
+    """
+    Mini S3 depolama katmanı testleri:
+    - Yüklenen Stok ve Sevkiyat Excel dosyalarının hem diske hem veritabanına (stored_excel_files) kaydedilmesi,
+    - Yeni Excel yüklendiğinde eski Excel dosyasının diskten ve veritabanından otomatik silinmesi (şişme önleme),
+    - Sunucu restart ettiğinde (disk silindiğinde) veritabanından diske otomatik geri yükleme (hydration),
+    - İndirme (/api/inventory/storage/files/{slot}/download) uç noktası doğrulaması.
+    """
+
+    @staticmethod
+    def _make_wb(headers: list[str], rows: list[tuple]) -> bytes:
+        wb = Workbook()
+        ws = wb.active
+        ws.append(headers)
+        for r in rows:
+            ws.append(list(r))
+        buf = BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    def test_mini_s3_stores_excels_deletes_old_file_on_new_upload_and_hydrates_on_restart(self, client):
+        from app.services.s3_storage import BASE_STORAGE_DIR
+
+        # 1) İlk stok Excel'ini (stok_eski_v1.xlsx) yükle
+        stock_v1 = self._make_wb(
+            ["ETİKET", "REFERANS", "MİKTAR", "X98FIFO_TARIH"],
+            [("S3-L1", "REF-S3", 30, "01.05.2026 08:00")],
+        )
+        r1 = client.post(
+            "/api/inventory/import/stock?replace=true",
+            files={"file": ("stok_eski_v1.xlsx", stock_v1, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert r1.status_code == 200
+
+        old_disk_file = BASE_STORAGE_DIR / "stock" / "stok_eski_v1.xlsx"
+        assert old_disk_file.is_file()
+
+        files_1 = {f["slot"]: f for f in client.get("/api/inventory/storage/files").json()}
+        assert "stock" in files_1
+        assert files_1["stock"]["original_filename"] == "stok_eski_v1.xlsx"
+        assert files_1["stock"]["storage_key"] == "s3://sevkbul/stock/stok_eski_v1.xlsx"
+
+        # 2) Yeni stok Excel'i (stok_yeni_v2.xlsx) yükle -> eski stok_eski_v1.xlsx diskten SİLİNMELİ!
+        stock_v2 = self._make_wb(
+            ["ETİKET", "REFERANS", "MİKTAR", "X98FIFO_TARIH"],
+            [
+                ("S3-L1", "REF-S3", 30, "01.05.2026 08:00"),
+                ("S3-L2", "REF-S3", 45, "02.05.2026 08:00"),
+            ],
+        )
+        r2 = client.post(
+            "/api/inventory/import/stock?replace=true",
+            files={"file": ("stok_yeni_v2.xlsx", stock_v2, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert r2.status_code == 200
+
+        new_disk_file = BASE_STORAGE_DIR / "stock" / "stok_yeni_v2.xlsx"
+        assert new_disk_file.is_file()
+        assert not old_disk_file.exists(), "Eski stok Excel dosyası diskten otomatik silinmeli!"
+
+        # Klasörde yalnızca 1 dosya olmalı (şişme olmamalı)
+        stock_dir_files = list((BASE_STORAGE_DIR / "stock").iterdir())
+        assert len(stock_dir_files) == 1
+
+        # 3) Container/Sunucu restart simülasyonu: Diskteki dosyayı sil, API çağrıldığında DB'den geri yüklensin!
+        new_disk_file.unlink()
+        assert not new_disk_file.exists()
+
+        files_after_restart = {f["slot"]: f for f in client.get("/api/inventory/storage/files").json()}
+        assert files_after_restart["stock"]["original_filename"] == "stok_yeni_v2.xlsx"
+        assert files_after_restart["stock"]["exists_on_disk"] is True
+        assert new_disk_file.is_file(), "Restart sonrası DB'den diske otomatik geri yüklenmeli!"
+
+        # 4) İndirme uç noktasını doğrula
+        dl = client.get("/api/inventory/storage/files/stock/download")
+        assert dl.status_code == 200
+        assert dl.content == stock_v2
+
+
+
+
+

@@ -3,7 +3,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     Column, Integer, String, DateTime, ForeignKey, Numeric, Index, Boolean,
-    UniqueConstraint, Enum as SAEnum,
+    LargeBinary, UniqueConstraint, Enum as SAEnum,
 )
 from sqlalchemy.orm import relationship
 
@@ -136,3 +136,40 @@ class ShipmentTarget(Base):
     target_quantity = Column(Numeric(12, 2), nullable=False)
     source_name = Column(String(200), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ExcelHeaderSettings(Base):
+    """Excel sütun üst başlığı eşleştirme ayarları (farklı ERP/firma formatları için)."""
+    __tablename__ = "excel_header_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    label_header = Column(String(200), default="ETİKET", nullable=False)
+    reference_header = Column(String(200), default="REFERANS", nullable=False)
+    quantity_header = Column(String(200), default="MİKTAR", nullable=False)
+    fifo_date_header = Column(String(200), default="X98FIFO_TARIH", nullable=False)
+    blocked_header = Column(String(200), default="BLOKAJ", nullable=False)
+    shipment_reference_header = Column(String(200), default="REFERANS", nullable=False)
+    shipment_quantity_header = Column(String(200), default="MİKTAR", nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class StoredExcelFile(Base):
+    """Mini S3 — Yüklenen Excel dosyalarının konum, üstveri ve binary saklama tablosu.
+    Her slot ('stock' veya 'shipment') için yalnızca en son yüklenen dosya tutulur;
+    yeni Excel yüklendiğinde eski dosya hem diskten hem veritabanından otomatik silinir.
+    """
+    __tablename__ = "stored_excel_files"
+
+    id = Column(Integer, primary_key=True, index=True)
+    slot = Column(String(50), unique=True, nullable=False, index=True)  # 'stock' | 'shipment'
+    original_filename = Column(String(255), nullable=False)
+    storage_key = Column(String(500), nullable=False)       # s3://sevkbul/stock/<dosya>.xlsx
+    local_path = Column(String(500), nullable=False)        # storage/s3/stock/<dosya>.xlsx
+    content_type = Column(String(150), nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    sha256_hash = Column(String(64), nullable=False)
+    row_count = Column(Integer, default=0, nullable=False)
+    file_data = Column(LargeBinary, nullable=False)
+    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+

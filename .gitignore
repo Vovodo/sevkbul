@@ -14,6 +14,8 @@ postgres_data/
 *.db-wal
 *.sqlite
 *.sqlite3
+storage/
+backend/storage/
 venv/
 .venv/
 .DS_Store

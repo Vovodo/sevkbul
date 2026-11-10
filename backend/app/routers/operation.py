@@ -128,6 +128,17 @@ async def import_targets_excel(
     if result.missing_columns:
         raise HTTPException(status_code=400, detail=f"Eksik kolonlar: {', '.join(result.missing_columns)}")
 
+    if result.successful > 0:
+        from app.services.s3_storage import put_excel_object
+        put_excel_object(
+            db=db,
+            slot="shipment",
+            filename=file.filename,
+            content=content,
+            row_count=result.successful,
+            content_type=file.content_type or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
     response = ShipmentTargetImportResultSchema(
         total_rows=result.total_rows,
         successful=result.successful,

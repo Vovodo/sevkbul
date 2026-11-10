@@ -222,6 +222,7 @@ class CandidateLabelSchema(BaseModel):
     quantity: float
     fifo_time: str
     blocked: bool = False
+    scanned: bool = False
 
 
 class CandidateListSchema(BaseModel):
@@ -269,4 +270,37 @@ class ShipmentManifestSchema(BaseModel):
     unblocked_label_count: int = 0
     blocked_labels: list[CandidateLabelSchema] = []
     items: list[ShipmentManifestItemSchema]
+
+
+class ExcelHeaderSettingsSchema(BaseModel):
+    label_header: str = "ETİKET"
+    reference_header: str = "REFERANS"
+    quantity_header: str = "MİKTAR"
+    fifo_date_header: str = "X98FIFO_TARIH"
+    blocked_header: str = "BLOKAJ"
+    shipment_reference_header: str = "REFERANS"
+    shipment_quantity_header: str = "MİKTAR"
+
+
+class ExcelHeaderInspectResultSchema(BaseModel):
+    headers: list[str]
+    matched_stock_columns: dict[str, str | None]
+    matched_shipment_columns: dict[str, str | None]
+    sample_rows: list[dict[str, str]]
+
+
+class StoredExcelFileSchema(BaseModel):
+    slot: str
+    original_filename: str
+    storage_key: str
+    local_path: str
+    content_type: str
+    size_bytes: int
+    sha256_hash: str
+    row_count: int = 0
+    uploaded_at: str
+    exists_on_disk: bool = True
+    download_url: str
+
+
 

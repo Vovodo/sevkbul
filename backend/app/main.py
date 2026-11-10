@@ -25,10 +25,10 @@ def _ensure_inventory_blocked() -> None:
     columns = {col["name"] for col in inspector.get_columns("inventory_labels")}
     if "blocked" not in columns:
         with database.engine.begin() as conn:
-            conn.execute(text("ALTER TABLE inventory_labels ADD COLUMN blocked BOOLEAN NOT NULL DEFAULT 0"))
+            conn.execute(text("ALTER TABLE inventory_labels ADD COLUMN blocked BOOLEAN NOT NULL DEFAULT FALSE"))
     if "hidden" not in columns:
         with database.engine.begin() as conn:
-            conn.execute(text("ALTER TABLE inventory_labels ADD COLUMN hidden BOOLEAN NOT NULL DEFAULT 0"))
+            conn.execute(text("ALTER TABLE inventory_labels ADD COLUMN hidden BOOLEAN NOT NULL DEFAULT FALSE"))
 
 
 def _ensure_shipment_sort_order() -> None:
@@ -45,7 +45,7 @@ def _ensure_shipment_sort_order() -> None:
     with database.engine.begin() as conn:
         rows = conn.execute(text(
             "SELECT id, group_id, created_at FROM shipments "
-            "WHERE UPPER(status) IN ('ACTIVE', 'COMPLETED') "
+            "WHERE UPPER(CAST(status AS VARCHAR)) IN ('ACTIVE', 'COMPLETED') "
             "ORDER BY created_at ASC, id ASC"
         )).fetchall()
         rank: dict[int, int] = {}
@@ -101,17 +101,17 @@ def _purge_cancelled_shipments() -> None:
     with database.engine.begin() as conn:
         conn.execute(text(
             "DELETE FROM shipment_date_quotas WHERE shipment_id IN "
-            "(SELECT id FROM shipments WHERE UPPER(status) = 'CANCELLED')"
+            "(SELECT id FROM shipments WHERE UPPER(CAST(status AS VARCHAR)) = 'CANCELLED')"
         ))
         conn.execute(text(
             "DELETE FROM shipment_labels WHERE shipment_id IN "
-            "(SELECT id FROM shipments WHERE UPPER(status) = 'CANCELLED')"
+            "(SELECT id FROM shipments WHERE UPPER(CAST(status AS VARCHAR)) = 'CANCELLED')"
         ))
         conn.execute(text(
             "DELETE FROM scan_logs WHERE shipment_id IN "
-            "(SELECT id FROM shipments WHERE UPPER(status) = 'CANCELLED')"
+            "(SELECT id FROM shipments WHERE UPPER(CAST(status AS VARCHAR)) = 'CANCELLED')"
         ))
-        conn.execute(text("DELETE FROM shipments WHERE UPPER(status) = 'CANCELLED'"))
+        conn.execute(text("DELETE FROM shipments WHERE UPPER(CAST(status AS VARCHAR)) = 'CANCELLED'"))
 
 
 @asynccontextmanager
@@ -127,6 +127,8 @@ async def lifespan(app: FastAPI):
     _purge_cancelled_shipments()
     db = database.SessionLocal()
     try:
+        from app.services.s3_storage import hydrate_storage_on_startup
+        hydrate_storage_on_startup(db)
         backfill_missing_quotas(db)
         lookup_cache.load_all_active(db)
     finally:

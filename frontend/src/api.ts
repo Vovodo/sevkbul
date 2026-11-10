@@ -131,6 +131,7 @@ export interface CandidateLabel {
   quantity: number;
   fifo_time: string;
   blocked?: boolean;
+  scanned?: boolean;
 }
 
 export interface ScannedLabel {
@@ -192,6 +193,37 @@ export interface ShipmentManifest {
   unblocked_label_count?: number;
   blocked_labels?: CandidateLabel[];
   items: ShipmentManifestItem[];
+}
+
+export interface ExcelHeaderSettings {
+  label_header: string;
+  reference_header: string;
+  quantity_header: string;
+  fifo_date_header: string;
+  blocked_header: string;
+  shipment_reference_header: string;
+  shipment_quantity_header: string;
+}
+
+export interface ExcelHeaderInspectResult {
+  headers: string[];
+  matched_stock_columns: Record<string, string | null>;
+  matched_shipment_columns: Record<string, string | null>;
+  sample_rows: Record<string, string>[];
+}
+
+export interface StoredExcelFileItem {
+  slot: 'stock' | 'shipment' | string;
+  original_filename: string;
+  storage_key: string;
+  local_path: string;
+  content_type: string;
+  size_bytes: number;
+  sha256_hash: string;
+  row_count: number;
+  uploaded_at: string;
+  exists_on_disk: boolean;
+  download_url: string;
 }
 
 export const api = {
@@ -357,4 +389,39 @@ export const api = {
 
   getActiveGroup: () =>
     request<{ selected_group_id: number | null }>('/api/shipment/active-group'),
+
+  getExcelHeaders: () =>
+    request<ExcelHeaderSettings>('/api/inventory/excel-headers'),
+
+  updateExcelHeaders: (settings: ExcelHeaderSettings) =>
+    request<ExcelHeaderSettings>('/api/inventory/excel-headers', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    }),
+
+  resetExcelHeaders: () =>
+    request<ExcelHeaderSettings>('/api/inventory/excel-headers/reset', {
+      method: 'POST',
+    }),
+
+  inspectExcelHeaders: async (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`${API_BASE}/api/inventory/excel-headers/inspect`, {
+      method: 'POST',
+      body: form,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Excel analiz hatası' }));
+      throw new Error(typeof err.detail === 'string' ? err.detail : 'Excel analiz hatası');
+    }
+    return res.json() as Promise<ExcelHeaderInspectResult>;
+  },
+
+  getStoredExcelFiles: () =>
+    request<StoredExcelFileItem[]>('/api/inventory/storage/files'),
+
+  storedExcelDownloadUrl: (slot: string) =>
+    `${API_BASE}/api/inventory/storage/files/${encodeURIComponent(slot)}/download`,
 };

@@ -14,7 +14,7 @@ export function getWsUrl(): string {
   return 'wss://sevkbulapi.rfqcollector.com/ws';
 }
 
-export type WsEventType = 'scan' | 'undo' | 'reset' | 'find' | 'target_add' | 'target_clear' | 'target_import' | 'stock_import' | 'group_delete' | 'recalculate' | 'recalculate_progress';
+export type WsEventType = 'scan' | 'undo' | 'reset' | 'scans_reset' | 'group_scans_reset' | 'find' | 'target_add' | 'target_clear' | 'target_import' | 'stock_import' | 'group_delete' | 'recalculate' | 'recalculate_progress' | 'excel_headers_updated';
 
 export interface WsMessage {
   event: WsEventType;

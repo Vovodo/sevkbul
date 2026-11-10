@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.models import InventoryLabel
 from app.utils.excel_parser import (
     find_column_mapping,
+    get_excel_header_settings_dict,
     parse_label,
     parse_quantity,
     parse_reference,
@@ -63,12 +64,31 @@ def import_excel(db: Session, file_content: bytes, replace_existing: bool = True
         return result
 
     headers = rows[0]
-    mapping = find_column_mapping(list(headers))
+    custom_headers = get_excel_header_settings_dict(db)
+    header_row_idx = 0
+    mapping = find_column_mapping(list(headers), custom_headers=custom_headers)
 
-    missing = []
-    for req_key, field_name in REQUIRED_COLUMNS.items():
-        if field_name not in mapping:
-            missing.append(req_key)
+    required_by_field = [
+        ("label", custom_headers.get("label_header") or "ETİKET"),
+        ("reference", custom_headers.get("reference_header") or "REFERANS"),
+        ("quantity", custom_headers.get("quantity_header") or "MİKTAR"),
+        ("fifo_date", custom_headers.get("fifo_date_header") or "X98FIFO_TARIH"),
+    ]
+    missing = [
+        hdr_label
+        for field_name, hdr_label in required_by_field
+        if field_name not in mapping
+    ]
+    # Eğer 1. satır boşsa veya rapor başlığıysa, ilk 10 satır içinde başlık satırını ara
+    if missing and len(rows) > 1:
+        for cand_idx in range(1, min(len(rows), 10)):
+            cand_map = find_column_mapping(list(rows[cand_idx]), custom_headers=custom_headers)
+            if all(fn in cand_map for fn, _ in required_by_field):
+                mapping = cand_map
+                header_row_idx = cand_idx
+                missing = []
+                break
+
     if missing:
         result.missing_columns = missing
         return result
@@ -94,7 +114,7 @@ def import_excel(db: Session, file_content: bytes, replace_existing: bool = True
     BATCH_SIZE = 1000
     PREVIEW_LIMIT = 5
 
-    for row_idx, row in enumerate(rows[1:], start=2):
+    for row_idx, row in enumerate(rows[header_row_idx + 1:], start=header_row_idx + 2):
         result.total_rows += 1
 
         label_val = row[mapping["label"]] if mapping["label"] < len(row) else None
@@ -125,7 +145,8 @@ def import_excel(db: Session, file_content: bytes, replace_existing: bool = True
         fifo_date = parse_fifo_datetime(date_val)
         if fifo_date is None:
             result.invalid_fifo_date_count += 1
-            result.errors.append(RowError(row=row_idx, reason="X98FIFO_TARIH geçersiz", error_type="fifo_date"))
+            fifo_hdr = custom_headers.get("fifo_date_header") or "X98FIFO_TARIH"
+            result.errors.append(RowError(row=row_idx, reason=f"{fifo_hdr} geçersiz", error_type="fifo_date"))
             continue
 
         if label in seen_labels:

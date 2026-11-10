@@ -55,42 +55,41 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.55rem;
+  gap: 0.4rem 0.5rem;
   margin-bottom: 0.85rem;
-  padding: 0.5rem 0.8rem;
-  background: rgba(16, 23, 36, 0.9);
+  padding: 0.42rem 0.6rem;
+  background: rgba(16, 23, 36, 0.92);
   backdrop-filter: blur(14px);
   border: 1px solid #24324a;
   border-radius: 14px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
   flex-wrap: wrap;
-}
-
-@media (min-width: 960px) {
-  .op-header {
-    flex-wrap: nowrap;
-  }
-  .op-header-actions {
-    flex-wrap: nowrap;
-  }
-  .op-header-group {
-    flex-wrap: nowrap;
-  }
+  max-width: 100%;
+  overflow: visible;
 }
 
 .op-header-brand {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
+  gap: 0.4rem;
   min-width: 0;
-  flex-shrink: 0;
+  flex-shrink: 1;
+  flex-wrap: nowrap;
+}
+.op-header-brand .brand-text-block > span:last-child {
+  display: none;
 }
 
 .op-header-status {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.25rem;
   flex-wrap: nowrap;
+}
+.op-header-status .op-badge,
+.op-header-status .op-live {
+  font-size: 0.68rem;
+  padding: 0.16rem 0.42rem;
 }
 
 .op-header h1 {
@@ -107,34 +106,25 @@ body {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 0.32rem;
+  justify-content: flex-end;
+  gap: 0.26rem;
   flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .op-header-group {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: 0.24rem;
   flex-wrap: wrap;
-}
-
-@media (min-width: 960px) {
-  .op-header {
-    flex-wrap: nowrap;
-  }
-  .op-header-actions {
-    flex-wrap: nowrap;
-  }
-  .op-header-group {
-    flex-wrap: nowrap;
-  }
 }
 
 .op-header-divider {
   width: 1px;
   height: 18px;
   background: #26344d;
-  margin: 0 0.1rem;
+  margin: 0 0.06rem;
   flex: 0 0 auto;
 }
 
@@ -142,14 +132,14 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.28rem;
-  height: 31px;
-  padding: 0 0.48rem;
+  gap: 0.22rem;
+  height: 29px;
+  padding: 0 0.38rem;
   border-radius: 8px;
   border: 1px solid #28364f;
   background: #162032;
   color: #dbeafe;
-  font-size: 0.71rem;
+  font-size: 0.69rem;
   font-weight: 600;
   letter-spacing: 0;
   white-space: nowrap;
@@ -1656,28 +1646,27 @@ body.fs-active .op-scan-input {
     margin: 8mm 6mm;
   }
 
-  html, body {
+  html, body, #root, .op {
     background: #fff !important;
     color: #000 !important;
     margin: 0 !important;
     padding: 0 !important;
+    min-height: 0 !important;
     height: auto !important;
+    max-height: none !important;
     overflow: visible !important;
+    display: block !important;
     font-size: 8pt !important;
   }
 
-  /* Hide everything on screen except the manifest */
-  body * {
-    visibility: hidden;
-  }
-
-  .manifest-overlay,
-  .manifest-modal,
-  .printable-manifest,
-  .printable-manifest * {
-    visibility: visible !important;
-  }
-
+  /* Arka plandaki ana ekranı (.op-workspace, .op-header vb.) sadece gizlemekle (visibility: hidden)
+     kalmayıp display: none ile DOM akışından tamamen çıkarıyoruz ki arkada 7 tane boş kağıt üretilmesin! */
+  .op-header,
+  .op-workspace,
+  .op-alert,
+  .op-drop-overlay,
+  .op-upload-overlay,
+  .op-recalc-toast,
   .no-print {
     display: none !important;
   }
@@ -1693,21 +1682,27 @@ body.fs-active .op-scan-input {
     margin: 0 !important;
     display: block !important;
     width: 100% !important;
+    min-height: 0 !important;
     height: auto !important;
+    max-height: none !important;
     overflow: visible !important;
   }
 
-  .manifest-modal {
+  .manifest-modal,
+  .manifest-modal.stock-modal,
+  .manifest-modal.blocked-print-modal {
     position: static !important;
     background: #fff !important;
     border: none !important;
     box-shadow: none !important;
     width: 100% !important;
     max-width: 100% !important;
+    min-height: 0 !important;
     max-height: none !important;
     height: auto !important;
     padding: 0 !important;
     margin: 0 !important;
+    display: block !important;
     overflow: visible !important;
   }
 
@@ -1718,7 +1713,10 @@ body.fs-active .op-scan-input {
     padding: 0 !important;
     margin: 0 !important;
     width: 100% !important;
+    min-height: 0 !important;
     height: auto !important;
+    max-height: none !important;
+    display: block !important;
     overflow: visible !important;
   }
 
@@ -2348,7 +2346,7 @@ body.fs-active .op-scan-input {
 }
 
 /* ── Çalışma alanı: sevkiyatlar + sabit okutma ── */
-.op-page { max-width: 1320px; }
+.op-page { max-width: 1420px; }
 
 .op-count {
   display: inline-flex;
@@ -3889,3 +3887,466 @@ body.fs-active .op-scan-input {
     align-items: stretch;
   }
 }
+
+/* ── Ayarlar (Excel Üst Başlık Eşleştirme) Modal ── */
+.op-inline-link-btn {
+  background: none;
+  border: none;
+  color: #60a5fa;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+}
+.op-inline-link-btn:hover {
+  color: #93c5fd;
+}
+
+.manifest-modal.settings-modal {
+  max-width: 960px;
+  height: auto;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-mode-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+}
+.settings-mode-badge.is-default {
+  background: rgba(16, 185, 129, 0.14);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  color: #6ee7b7;
+}
+.settings-mode-badge.is-custom {
+  background: rgba(59, 130, 246, 0.18);
+  border: 1px solid rgba(59, 130, 246, 0.45);
+  color: #93c5fd;
+}
+
+.settings-modal-body {
+  padding: 1rem 1.25rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  flex: 1 1 auto;
+}
+
+.settings-intro-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  background: rgba(30, 41, 59, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+}
+.settings-intro-text strong {
+  display: block;
+  font-size: 0.86rem;
+  color: #f8fafc;
+  margin-bottom: 0.2rem;
+}
+.settings-intro-text p {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #94a3b8;
+  line-height: 1.45;
+}
+.settings-intro-text code {
+  color: #93c5fd;
+  background: rgba(15, 23, 42, 0.65);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+}
+.settings-inspect-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* Görseldeki yeşil Excel üst başlık şeridi önizlemesi */
+.settings-excel-preview-card {
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(101, 163, 13, 0.4);
+  border-radius: 10px;
+  padding: 0.65rem 0.85rem;
+}
+.settings-preview-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #a3e635;
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.settings-excel-strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(110px, 1fr));
+  gap: 2px;
+  background: #365314;
+  border: 1px solid #65a30d;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.settings-excel-cell {
+  background: linear-gradient(180deg, #65a30d 0%, #4d7c0f 100%);
+  padding: 0.42rem 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  min-width: 0;
+}
+.settings-excel-cell.is-fifo {
+  background: linear-gradient(180deg, #4d7c0f 0%, #3f6212 100%);
+}
+.settings-excel-cell.is-optional {
+  opacity: 0.9;
+}
+.settings-excel-role {
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.78);
+  letter-spacing: 0.04em;
+}
+.settings-excel-cell strong {
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: #ffffff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-inspected-box {
+  background: rgba(30, 58, 138, 0.16);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: 9px;
+  padding: 0.65rem 0.85rem;
+}
+.settings-inspected-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: #bfdbfe;
+  margin-bottom: 0.45rem;
+}
+.settings-clear-inspect {
+  background: transparent;
+  border: 1px solid rgba(147, 197, 253, 0.35);
+  color: #93c5fd;
+  border-radius: 5px;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+.settings-header-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.settings-header-chip {
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(96, 165, 250, 0.4);
+  color: #e2e8f0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.74rem;
+  font-weight: 600;
+  padding: 0.2rem 0.5rem;
+  border-radius: 5px;
+}
+
+.settings-sections-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+.settings-section-card {
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 10px;
+  padding: 0.85rem 1rem;
+}
+.settings-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+.settings-section-head h3 {
+  margin: 0;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+.settings-section-head span {
+  font-size: 0.74rem;
+  color: #94a3b8;
+}
+
+.settings-fields-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+.settings-field-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(240px, 1fr);
+  gap: 0.85rem;
+  align-items: center;
+  padding: 0.55rem 0.7rem;
+  background: rgba(30, 41, 59, 0.42);
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  border-radius: 8px;
+}
+.settings-field-info label {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #e2e8f0;
+  margin-bottom: 0.18rem;
+}
+.settings-field-info small {
+  display: block;
+  font-size: 0.73rem;
+  color: #94a3b8;
+  line-height: 1.35;
+}
+.settings-req-badge,
+.settings-opt-badge {
+  font-size: 0.64rem;
+  font-weight: 700;
+  padding: 0.08rem 0.38rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+.settings-req-badge {
+  background: rgba(59, 130, 246, 0.16);
+  color: #93c5fd;
+  border: 1px solid rgba(59, 130, 246, 0.32);
+}
+.settings-opt-badge {
+  background: rgba(148, 163, 184, 0.14);
+  color: #cbd5e1;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.settings-field-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+}
+.settings-header-input {
+  width: 100%;
+  background: #0f172a;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 7px;
+  padding: 0.48rem 0.65rem;
+  color: #f8fafc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+.settings-header-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.22);
+}
+.settings-header-select {
+  width: 100%;
+  background: rgba(30, 58, 138, 0.25);
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  border-radius: 6px;
+  padding: 0.34rem 0.55rem;
+  color: #bfdbfe;
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+.settings-default-note {
+  font-size: 0.7rem;
+  color: #64748b;
+}
+.settings-default-note code {
+  color: #94a3b8;
+}
+
+.settings-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  padding: 0.8rem 1.25rem;
+  background: rgba(15, 23, 42, 0.85);
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+@media (max-width: 768px) {
+  .settings-intro-box {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .settings-field-row {
+    grid-template-columns: 1fr;
+    gap: 0.45rem;
+  }
+  .settings-excel-strip {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+}
+
+/* ── Blokajlıları Yazdır Modal & Çip Stilleri ── */
+.sc-meta-chip.is-blocked-print {
+  background: rgba(245, 158, 11, 0.22);
+  border: 1px solid rgba(245, 158, 11, 0.55);
+  color: #fef3c7;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.sc-meta-chip.is-blocked-print:hover {
+  background: rgba(245, 158, 11, 0.34);
+  border-color: #f59e0b;
+  color: #ffffff;
+}
+
+.op-ov-pill.is-blocked.is-clickable {
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.op-ov-pill.is-blocked.is-clickable:hover {
+  background: rgba(245, 158, 11, 0.24);
+  border-color: #f59e0b;
+}
+
+.manifest-modal.blocked-print-modal {
+  max-width: 1040px;
+  height: 86vh;
+  min-height: min(560px, 90vh);
+  max-height: 90vh;
+}
+
+.blocked-print-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  padding: 0.65rem 1.25rem;
+  background: rgba(15, 23, 42, 0.78);
+  border-bottom: 1px solid #1e293b;
+}
+
+.blocked-mode-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.blocked-mode-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  background: #1e293b;
+  color: #cbd5e1;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.blocked-mode-tab:hover {
+  border-color: #475569;
+  color: #f8fafc;
+}
+.blocked-mode-tab.active {
+  background: rgba(245, 158, 11, 0.2);
+  border-color: #f59e0b;
+  color: #fde68a;
+  font-weight: 700;
+}
+
+.blocked-search-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 0.35rem 0.65rem;
+  min-width: 240px;
+}
+.blocked-search-box input {
+  background: transparent;
+  border: none;
+  color: #f8fafc;
+  font-size: 0.8rem;
+  width: 100%;
+  outline: none;
+}
+
+.blocked-shipment-subtabs {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.55rem 1.25rem;
+  background: #0d1527;
+  border-bottom: 1px solid #1e293b;
+  overflow-x: auto;
+}
+
+.blocked-subtab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 7px;
+  border: 1px solid #334155;
+  background: #1e293b;
+  color: #94a3b8;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.blocked-subtab.active {
+  background: rgba(59, 130, 246, 0.25);
+  border-color: #3b82f6;
+  color: #ffffff;
+  font-weight: 700;
+}
+.blocked-subtab-count {
+  background: rgba(245, 158, 11, 0.25);
+  color: #fde68a;
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+
+

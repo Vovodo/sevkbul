@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    database_url: str = "sqlite:///./sevkbul.db"
+    database_url: str = "postgresql://postgres:7LcPCBpbZBtQqrv8HT4jJE6q5SK0C7z3OxVQoQnByl0Z9j052Yxgpp5agIjxgtus@213.142.148.57:5432/sevkbul"
     frontend_url: str = ""  # Coolify'da FRONTEND_URL=https://sevkbul.rfqcollector.com
 
     cors_origins: list[str] = [

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronUp, GripVertical, Layers, Lock, Pencil, Search, TriangleAlert } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronUp, GripVertical, Layers, Lock, Pencil, Printer, Search, TriangleAlert } from 'lucide-react';
 import { api, CandidateLabel, ShipmentGroup, ShipmentManifest, ShipmentProgress, ShipmentManifestItem } from '../api';
 
 type RefFilterMode = 'all' | 'open' | 'short' | 'blocked' | 'done';
@@ -14,6 +14,7 @@ interface ShipmentCardProps {
   onRenameGroup: (groupId: number, name: string) => void;
   onRemove: (groupId: number) => void;
   onResetScans?: (groupId: number) => void;
+  onPrintBlocked?: (groupId: number) => void;
   dragging?: boolean;
   dropTarget?: boolean;
   onDragStart?: (groupId: number) => void;
@@ -34,6 +35,7 @@ export default function ShipmentCard({
   onRenameGroup,
   onRemove,
   onResetScans,
+  onPrintBlocked,
   dragging,
   dropTarget,
   onDragStart,
@@ -419,19 +421,35 @@ export default function ShipmentCard({
             )}
 
             {totalBlockedLabels > 0 && (
-              <button
-                type="button"
-                className="sc-meta-chip is-blocked"
-                onClick={e => openWithFilter('blocked', e)}
-                title="Blokajlı etiketi olan referansları göster"
-              >
-                <Lock size={11} />
-                <span>
-                  {totalRefCount === 1
-                    ? `${totalBlockedLabels} Blokajlı Etiket`
-                    : `${blockedRefCount} Ref • ${totalBlockedLabels} Blokajlı`}
-                </span>
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="sc-meta-chip is-blocked"
+                  onClick={e => openWithFilter('blocked', e)}
+                  title="Blokajlı etiketi olan referansları göster"
+                >
+                  <Lock size={11} />
+                  <span>
+                    {totalRefCount === 1
+                      ? `${totalBlockedLabels} Blokajlı Etiket`
+                      : `${blockedRefCount} Ref • ${totalBlockedLabels} Blokajlı`}
+                  </span>
+                </button>
+                {onPrintBlocked && (
+                  <button
+                    type="button"
+                    className="sc-meta-chip is-blocked-print"
+                    onClick={e => {
+                      e.stopPropagation();
+                      onPrintBlocked(g.group_id);
+                    }}
+                    title={`${displayName} için hesaplanan blokajlı etiketleri yazdır`}
+                  >
+                    <Printer size={11} />
+                    <span>Blokajlıları Yazdır</span>
+                  </button>
+                )}
+              </>
             )}
           </div>
 

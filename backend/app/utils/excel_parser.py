@@ -16,6 +16,16 @@ REQUIRED_COLUMNS = {
     "X98FIFO_TARIH": "fifo_date",
 }
 
+DEFAULT_EXCEL_HEADERS = {
+    "label_header": "ETİKET",
+    "reference_header": "REFERANS",
+    "quantity_header": "MİKTAR",
+    "fifo_date_header": "X98FIFO_TARIH",
+    "blocked_header": "BLOKAJ",
+    "shipment_reference_header": "REFERANS",
+    "shipment_quantity_header": "MİKTAR",
+}
+
 SHIPMENT_REQUIRED_COLUMNS = {
     "REFERANS": "reference",
 }
@@ -37,6 +47,7 @@ def normalize_header(header: str) -> str:
     if header is None:
         return ""
     text = str(header).strip()
+    text = text.replace("ı", "I").replace("İ", "I")
     text = unicodedata.normalize("NFKD", text)
     text = "".join(c for c in text if not unicodedata.combining(c))
     text = text.upper()
@@ -44,98 +55,263 @@ def normalize_header(header: str) -> str:
     return text
 
 
-def find_column_mapping(headers: list[Any]) -> dict[str, int]:
+def _compact_header(norm: str) -> str:
+    return re.sub(r"[^A-Z0-9]+", "", norm)
+
+
+def _split_candidates(raw_header: str | None) -> list[str]:
+    if not raw_header:
+        return []
+    parts = [normalize_header(p) for p in str(raw_header).split(",")]
+    return [p for p in parts if p]
+
+
+def _match_candidates(
+    candidates: list[str],
+    normalized_headers: dict[str, int],
+    compact_headers: dict[str, int],
+    used_indices: set[int] | None = None,
+) -> int | None:
+    blocked_idx = used_indices or set()
+    for cand in candidates:
+        if cand in normalized_headers and normalized_headers[cand] not in blocked_idx:
+            return normalized_headers[cand]
+    for cand in candidates:
+        comp = _compact_header(cand)
+        if comp and comp in compact_headers and compact_headers[comp] not in blocked_idx:
+            return compact_headers[comp]
+    return None
+
+
+def get_excel_header_settings_dict(db: Any) -> dict[str, str]:
+    """Veritabanından aktif Excel üst başlık ayarlarını okur; kayıt yoksa varsayılanları döner."""
+    if db is None:
+        return dict(DEFAULT_EXCEL_HEADERS)
+    try:
+        from app.models import ExcelHeaderSettings
+        row = db.query(ExcelHeaderSettings).filter(ExcelHeaderSettings.id == 1).first()
+        if row is None:
+            return dict(DEFAULT_EXCEL_HEADERS)
+        return {
+            "label_header": (row.label_header or DEFAULT_EXCEL_HEADERS["label_header"]).strip(),
+            "reference_header": (row.reference_header or DEFAULT_EXCEL_HEADERS["reference_header"]).strip(),
+            "quantity_header": (row.quantity_header or DEFAULT_EXCEL_HEADERS["quantity_header"]).strip(),
+            "fifo_date_header": (row.fifo_date_header or DEFAULT_EXCEL_HEADERS["fifo_date_header"]).strip(),
+            "blocked_header": (row.blocked_header if row.blocked_header is not None else DEFAULT_EXCEL_HEADERS["blocked_header"]).strip(),
+            "shipment_reference_header": (row.shipment_reference_header or DEFAULT_EXCEL_HEADERS["shipment_reference_header"]).strip(),
+            "shipment_quantity_header": (row.shipment_quantity_header or DEFAULT_EXCEL_HEADERS["shipment_quantity_header"]).strip(),
+        }
+    except Exception:
+        return dict(DEFAULT_EXCEL_HEADERS)
+
+
+def find_column_mapping(
+    headers: list[Any],
+    custom_headers: dict[str, str] | None = None,
+) -> dict[str, int]:
     mapping: dict[str, int] = {}
-    normalized_headers = {normalize_header(h): idx for idx, h in enumerate(headers) if h is not None}
+    cfg = {**DEFAULT_EXCEL_HEADERS, **(custom_headers or {})}
+
+    normalized_headers: dict[str, int] = {}
+    compact_headers: dict[str, int] = {}
+    for idx, h in enumerate(headers):
+        if h is None:
+            continue
+        nh = normalize_header(h)
+        if not nh:
+            continue
+        if nh not in normalized_headers:
+            normalized_headers[nh] = idx
+        ch = _compact_header(nh)
+        if ch and ch not in compact_headers:
+            compact_headers[ch] = idx
 
     # 1. Label column matching
-    label_aliases = ["ETIKET", "ETIKET_NO", "ETIKETNO", "BARKOD", "LABEL", "SERINO", "SERI_NO"]
-    for alias in label_aliases:
-        if alias in normalized_headers:
-            mapping["label"] = normalized_headers[alias]
-            break
-    if "label" not in mapping:
-        for norm_h, idx in normalized_headers.items():
-            if norm_h.startswith("ETIKET") and "SICIL" not in norm_h and "BASLANGIC" not in norm_h:
-                mapping["label"] = idx
+    used_indices: set[int] = set()
+    lbl_cands = _split_candidates(cfg.get("label_header"))
+    lbl_is_default = (
+        normalize_header(cfg.get("label_header", ""))
+        == normalize_header(DEFAULT_EXCEL_HEADERS["label_header"])
+    )
+    matched_lbl = _match_candidates(lbl_cands, normalized_headers, compact_headers, used_indices)
+    if matched_lbl is not None:
+        mapping["label"] = matched_lbl
+        used_indices.add(matched_lbl)
+    elif lbl_is_default:
+        label_aliases = ["ETIKET", "ETIKET_NO", "ETIKETNO", "BARKOD", "LABEL", "SERINO", "SERI_NO"]
+        for alias in label_aliases:
+            if alias in normalized_headers and normalized_headers[alias] not in used_indices:
+                mapping["label"] = normalized_headers[alias]
+                used_indices.add(mapping["label"])
                 break
+        if "label" not in mapping:
+            for norm_h, idx in normalized_headers.items():
+                if idx not in used_indices and norm_h.startswith("ETIKET") and "SICIL" not in norm_h and "BASLANGIC" not in norm_h:
+                    mapping["label"] = idx
+                    used_indices.add(idx)
+                    break
 
     # 2. Reference column matching
-    ref_aliases = ["REFERANS", "REFERANS_KODU", "REFERANSKODU", "REF", "REFERENCE", "URUN_KODU"]
-    for alias in ref_aliases:
-        if alias in normalized_headers:
-            mapping["reference"] = normalized_headers[alias]
-            break
-    if "reference" not in mapping:
-        for norm_h, idx in normalized_headers.items():
-            if "REFERANS" in norm_h:
-                mapping["reference"] = idx
+    ref_cands = _split_candidates(cfg.get("reference_header"))
+    ref_is_default = (
+        normalize_header(cfg.get("reference_header", ""))
+        == normalize_header(DEFAULT_EXCEL_HEADERS["reference_header"])
+    )
+    matched_ref = _match_candidates(ref_cands, normalized_headers, compact_headers, used_indices)
+    if matched_ref is not None:
+        mapping["reference"] = matched_ref
+        used_indices.add(matched_ref)
+    elif ref_is_default:
+        ref_aliases = ["REFERANS", "REFERANS_KODU", "REFERANSKODU", "REF", "REFERENCE", "URUN_KODU"]
+        for alias in ref_aliases:
+            if alias in normalized_headers and normalized_headers[alias] not in used_indices:
+                mapping["reference"] = normalized_headers[alias]
+                used_indices.add(mapping["reference"])
                 break
+        if "reference" not in mapping:
+            for norm_h, idx in normalized_headers.items():
+                if idx not in used_indices and "REFERANS" in norm_h:
+                    mapping["reference"] = idx
+                    used_indices.add(idx)
+                    break
 
     # 3. Quantity column matching
-    qty_aliases = ["MIKTAR", "MIKTARI", "QUANTITY", "QTY", "ADET"]
-    for alias in qty_aliases:
-        if alias in normalized_headers:
-            mapping["quantity"] = normalized_headers[alias]
-            break
-    if "quantity" not in mapping:
-        for norm_h, idx in normalized_headers.items():
-            if "MIKTAR" in norm_h or "QUANTITY" in norm_h:
-                mapping["quantity"] = idx
+    qty_cands = _split_candidates(cfg.get("quantity_header"))
+    qty_is_default = (
+        normalize_header(cfg.get("quantity_header", ""))
+        == normalize_header(DEFAULT_EXCEL_HEADERS["quantity_header"])
+    )
+    matched_qty = _match_candidates(qty_cands, normalized_headers, compact_headers, used_indices)
+    if matched_qty is not None:
+        mapping["quantity"] = matched_qty
+        used_indices.add(matched_qty)
+    elif qty_is_default:
+        qty_aliases = ["MIKTAR", "MIKTARI", "QUANTITY", "QTY", "ADET"]
+        for alias in qty_aliases:
+            if alias in normalized_headers and normalized_headers[alias] not in used_indices:
+                mapping["quantity"] = normalized_headers[alias]
+                used_indices.add(mapping["quantity"])
                 break
+        if "quantity" not in mapping:
+            for norm_h, idx in normalized_headers.items():
+                if idx not in used_indices and ("MIKTAR" in norm_h or "QUANTITY" in norm_h):
+                    mapping["quantity"] = idx
+                    used_indices.add(idx)
+                    break
 
     # 4. Fifo date column matching
-    fifo_aliases = ["X98FIFO_TARIH", "X98FIFO_TARIHI", "X98FIFOTARIH", "FIFO_TARIH", "FIFO_TARIHI", "FIFOTARIH", "FIFO_DATE", "FIFO"]
-    for alias in fifo_aliases:
-        if alias in normalized_headers:
-            mapping["fifo_date"] = normalized_headers[alias]
-            break
-    if "fifo_date" not in mapping:
-        for norm_h, idx in normalized_headers.items():
-            if "FIFO" in norm_h:
-                mapping["fifo_date"] = idx
+    fifo_cands = _split_candidates(cfg.get("fifo_date_header"))
+    fifo_is_default = (
+        normalize_header(cfg.get("fifo_date_header", ""))
+        == normalize_header(DEFAULT_EXCEL_HEADERS["fifo_date_header"])
+    )
+    matched_fifo = _match_candidates(fifo_cands, normalized_headers, compact_headers, used_indices)
+    if matched_fifo is not None:
+        mapping["fifo_date"] = matched_fifo
+        used_indices.add(matched_fifo)
+    elif fifo_is_default:
+        fifo_aliases = ["X98FIFO_TARIH", "X98FIFO_TARIHI", "X98FIFOTARIH", "FIFO_TARIH", "FIFO_TARIHI", "FIFOTARIH", "FIFO_DATE", "FIFO"]
+        for alias in fifo_aliases:
+            if alias in normalized_headers and normalized_headers[alias] not in used_indices:
+                mapping["fifo_date"] = normalized_headers[alias]
+                used_indices.add(mapping["fifo_date"])
                 break
+        if "fifo_date" not in mapping:
+            for norm_h, idx in normalized_headers.items():
+                if idx not in used_indices and "FIFO" in norm_h:
+                    mapping["fifo_date"] = idx
+                    used_indices.add(idx)
+                    break
 
     # 5. Blokaj column matching (opsiyonel)
-    blokaj_aliases = ["BLOKAJ", "BLOKAJLI", "BLOK", "BLOCKED", "BLOCK"]
-    for alias in blokaj_aliases:
-        if alias in normalized_headers:
-            mapping["blocked"] = normalized_headers[alias]
-            break
-    if "blocked" not in mapping:
-        for norm_h, idx in normalized_headers.items():
-            if "BLOKAJ" in norm_h:
-                mapping["blocked"] = idx
-                break
+    blk_raw = (cfg.get("blocked_header") or "").strip()
+    if blk_raw:
+        blk_cands = _split_candidates(blk_raw)
+        blk_is_default = (
+            normalize_header(blk_raw)
+            == normalize_header(DEFAULT_EXCEL_HEADERS["blocked_header"])
+        )
+        matched_blk = _match_candidates(blk_cands, normalized_headers, compact_headers, used_indices)
+        if matched_blk is not None:
+            mapping["blocked"] = matched_blk
+            used_indices.add(matched_blk)
+        elif blk_is_default:
+            blokaj_aliases = ["BLOKAJ", "BLOKAJLI", "BLOK", "BLOCKED", "BLOCK"]
+            for alias in blokaj_aliases:
+                if alias in normalized_headers and normalized_headers[alias] not in used_indices:
+                    mapping["blocked"] = normalized_headers[alias]
+                    used_indices.add(mapping["blocked"])
+                    break
+            if "blocked" not in mapping:
+                for norm_h, idx in normalized_headers.items():
+                    if idx not in used_indices and "BLOKAJ" in norm_h:
+                        mapping["blocked"] = idx
+                        used_indices.add(idx)
+                        break
 
     return mapping
 
 
-def find_shipment_column_mapping(headers: list[Any]) -> dict[str, int]:
+def find_shipment_column_mapping(
+    headers: list[Any],
+    custom_headers: dict[str, str] | None = None,
+) -> dict[str, int]:
     mapping: dict[str, int] = {}
-    normalized_headers = {normalize_header(h): idx for idx, h in enumerate(headers)}
+    cfg = {**DEFAULT_EXCEL_HEADERS, **(custom_headers or {})}
 
-    if "REFERANS" in normalized_headers:
-        mapping["reference"] = normalized_headers["REFERANS"]
-    else:
-        for norm_h, idx in normalized_headers.items():
-            if "REFERANS" in norm_h:
-                mapping["reference"] = idx
-                break
+    normalized_headers: dict[str, int] = {}
+    compact_headers: dict[str, int] = {}
+    for idx, h in enumerate(headers):
+        if h is None:
+            continue
+        nh = normalize_header(h)
+        if not nh:
+            continue
+        if nh not in normalized_headers:
+            normalized_headers[nh] = idx
+        ch = _compact_header(nh)
+        if ch and ch not in compact_headers:
+            compact_headers[ch] = idx
 
-    quantity_idx = None
-    for alias in SHIPMENT_QUANTITY_ALIASES:
-        if alias in normalized_headers:
-            quantity_idx = normalized_headers[alias]
-            if alias.startswith("SEVKIYAT"):
-                break
-    if quantity_idx is None:
-        for norm_h, idx in normalized_headers.items():
-            if "MIKTAR" in norm_h or "ADET" in norm_h:
-                quantity_idx = idx
-                break
-    if quantity_idx is not None:
-        mapping["quantity"] = quantity_idx
+    ref_cands = _split_candidates(cfg.get("shipment_reference_header"))
+    ref_is_default = (
+        normalize_header(cfg.get("shipment_reference_header", ""))
+        == normalize_header(DEFAULT_EXCEL_HEADERS["shipment_reference_header"])
+    )
+    matched_ref = _match_candidates(ref_cands, normalized_headers, compact_headers)
+    if matched_ref is not None:
+        mapping["reference"] = matched_ref
+    elif ref_is_default:
+        if "REFERANS" in normalized_headers:
+            mapping["reference"] = normalized_headers["REFERANS"]
+        else:
+            for norm_h, idx in normalized_headers.items():
+                if "REFERANS" in norm_h:
+                    mapping["reference"] = idx
+                    break
+
+    qty_cands = _split_candidates(cfg.get("shipment_quantity_header"))
+    qty_is_default = (
+        normalize_header(cfg.get("shipment_quantity_header", ""))
+        == normalize_header(DEFAULT_EXCEL_HEADERS["shipment_quantity_header"])
+    )
+    matched_qty = _match_candidates(qty_cands, normalized_headers, compact_headers)
+    if matched_qty is not None:
+        mapping["quantity"] = matched_qty
+    elif qty_is_default:
+        quantity_idx = None
+        for alias in SHIPMENT_QUANTITY_ALIASES:
+            if alias in normalized_headers:
+                quantity_idx = normalized_headers[alias]
+                if alias.startswith("SEVKIYAT"):
+                    break
+        if quantity_idx is None:
+            for norm_h, idx in normalized_headers.items():
+                if "MIKTAR" in norm_h or "ADET" in norm_h:
+                    quantity_idx = idx
+                    break
+        if quantity_idx is not None:
+            mapping["quantity"] = quantity_idx
 
     return mapping
 
@@ -193,7 +369,12 @@ def _parse_datetime_string(text: str) -> datetime | None:
             return None
 
     try:
-        parsed = date_parser.parse(text, dayfirst=True)
+        is_year_first = bool(re.match(r"^\d{4}[-/.]", text))
+        parsed = date_parser.parse(
+            text,
+            dayfirst=not is_year_first,
+            yearfirst=is_year_first,
+        )
         if isinstance(parsed, datetime):
             return _normalize_datetime(parsed)
         return datetime(parsed.year, parsed.month, parsed.day, 0, 0, 0)
@@ -286,4 +467,7 @@ def parse_blocked(value: Any) -> bool:
     if isinstance(value, (int, float)):
         return bool(int(value) != 0)
     norm = normalize_header(str(value))
-    return norm in {"DOGRU", "TRUE", "1", "EVET", "BLOKAJLI", "BLOKAJ", "YES"}
+    return norm in {
+        "DOGRU", "TRUE", "1", "EVET", "BLOKAJLI", "BLOKAJ",
+        "BLOKE", "BLOKELI", "YES", "E", "X", "KARANTINA",
+    }

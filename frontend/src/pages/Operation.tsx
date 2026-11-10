@@ -1,11 +1,13 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Check, ClipboardList, Copy, Crosshair, Layers, Lock, LockOpen, Maximize2, PackageSearch, Radio, RefreshCw, RotateCcw, SlidersHorizontal, Smartphone, TriangleAlert, X } from 'lucide-react';
-import { api, ShipmentGroup, ShipmentProgress, ScanResponse, ShipmentTarget, RecentScan, RecalculateStatus } from '../api';
+import { Check, ClipboardList, Copy, Crosshair, Layers, Lock, LockOpen, Maximize2, PackageSearch, Printer, Radio, RefreshCw, RotateCcw, Settings, SlidersHorizontal, Smartphone, TriangleAlert, X } from 'lucide-react';
+import { api, ShipmentGroup, ShipmentProgress, ScanResponse, ShipmentTarget, RecentScan, RecalculateStatus, ExcelHeaderSettings } from '../api';
 import { playScanSound, initAudio, ScanResultType } from '../audio';
 import SoundSettings from '../components/SoundSettings';
 import ManifestModal from '../components/ManifestModal';
 import StockModal from '../components/StockModal';
 import MobileDownloadModal from '../components/MobileDownloadModal';
+import SettingsModal, { DEFAULT_EXCEL_HEADER_SETTINGS } from '../components/SettingsModal';
+import BlockedPrintModal, { BlockedPrintMode } from '../components/BlockedPrintModal';
 import ShipmentCard from '../components/ShipmentCard';
 import Logo from '../components/Logo';
 import { ScanMark, ScanNotice } from '../components/ScanNotice';
@@ -20,6 +22,11 @@ export default function OperationPage() {
   const [showManifestModal, setShowManifestModal] = useState(false);
   const [showStockModal, setShowStockModal] = useState(false);
   const [showDownloadModal, setShowDownloadModal] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showBlockedPrintModal, setShowBlockedPrintModal] = useState(false);
+  const [blockedPrintMode, setBlockedPrintMode] = useState<BlockedPrintMode>('stock');
+  const [blockedPrintGroupId, setBlockedPrintGroupId] = useState<number | 'all'>('all');
+  const [excelHeaders, setExcelHeaders] = useState<ExcelHeaderSettings>(DEFAULT_EXCEL_HEADER_SETTINGS);
   const [stockLoaded, setStockLoaded] = useState(false);
   const [stockCount, setStockCount] = useState(0);
   const [targets, setTargets] = useState<ShipmentTarget[]>([]);
@@ -182,6 +189,7 @@ export default function OperationPage() {
         setSelectedGroupId(res.selected_group_id);
       }
     }).catch(() => {});
+    api.getExcelHeaders().then(setExcelHeaders).catch(() => {});
   }, []);
 
   useEffect(() => () => {
@@ -269,6 +277,11 @@ export default function OperationPage() {
         setStockCount(d.total_labels);
       }
       api.getGroups().then(setGroups).catch(() => {});
+      return;
+    }
+
+    if (msg.event === 'excel_headers_updated' && d) {
+      setExcelHeaders(d as ExcelHeaderSettings);
       return;
     }
 
@@ -824,11 +837,11 @@ export default function OperationPage() {
     <div className="op-page">
       <header className="op-header">
         <div className="op-header-brand">
-          <Logo size="md" variant="full" />
+          <Logo size="sm" variant="full" />
           <div className="op-header-status">
-            {stockLoaded && <span className="op-badge ok">{stockCount.toLocaleString('tr-TR')} etiket yüklü</span>}
+            {stockLoaded && <span className="op-badge ok">{stockCount.toLocaleString('tr-TR')} etiket</span>}
             <span className={`op-live ${live ? 'is-on' : 'is-off'}`}>
-              <Radio size={13} />
+              <Radio size={12} />
               {live ? 'Canlı' : 'Bağlantı yok'}
             </span>
           </div>
@@ -842,7 +855,7 @@ export default function OperationPage() {
                 className="op-nav-btn is-primary"
                 onClick={() => setShowManifestModal(true)}
               >
-                <ClipboardList size={14} />
+                <ClipboardList size={13} />
                 <span>FIFO Listesi</span>
               </button>
             )}
@@ -852,8 +865,24 @@ export default function OperationPage() {
                 className="op-nav-btn"
                 onClick={() => setShowStockModal(true)}
               >
-                <PackageSearch size={14} />
+                <PackageSearch size={13} />
                 <span>Stok Listesi</span>
+              </button>
+            )}
+            {(stockLoaded || groups.length > 0) && (
+              <button
+                type="button"
+                className="op-nav-btn"
+                onClick={() => {
+                  setBlockedPrintMode(groups.length > 0 ? 'shipment' : 'stock');
+                  setBlockedPrintGroupId('all');
+                  setShowBlockedPrintModal(true);
+                }}
+                title="Kayıtlı stoktaki veya sevkiyatlardaki blokajlı etiketleri yazdır"
+                style={{ borderColor: 'rgba(245, 158, 11, 0.45)', color: '#fde68a' }}
+              >
+                <Printer size={13} />
+                <span>Blokaj Yazdır</span>
               </button>
             )}
             {isScanning && (
@@ -861,9 +890,10 @@ export default function OperationPage() {
                 type="button"
                 className={`op-nav-btn ${showSetup ? 'is-active' : ''}`}
                 onClick={() => setShowSetup(v => !v)}
+                title={showSetup ? 'Kurulum ve Excel yükleme formunu gizle' : 'Kurulum ve Excel yükleme formunu göster'}
               >
-                <SlidersHorizontal size={14} />
-                <span>{showSetup ? 'Formu Gizle' : 'Formu Göster'}</span>
+                <SlidersHorizontal size={13} />
+                <span>{showSetup ? 'Formu Gizle' : 'Kurulum'}</span>
               </button>
             )}
           </div>
@@ -874,10 +904,20 @@ export default function OperationPage() {
             <button
               type="button"
               className="op-nav-btn"
-              onClick={() => setShowDownloadModal(true)}
+              onClick={() => setShowSettingsModal(true)}
+              title="Excel sütun üst başlığı eşleştirme ve Mini S3 ayarları"
             >
-              <Smartphone size={14} />
-              <span>Mobil / QR</span>
+              <Settings size={13} />
+              <span>Ayarlar</span>
+            </button>
+            <button
+              type="button"
+              className="op-nav-btn"
+              onClick={() => setShowDownloadModal(true)}
+              title="Mobil uygulama indirme ve QR kod"
+            >
+              <Smartphone size={13} />
+              <span>Mobil</span>
             </button>
             <SoundSettings />
           </div>
@@ -893,8 +933,8 @@ export default function OperationPage() {
                   disabled={loading === 'reset-scans' || groups.every(g => g.scanned_quantity <= 0)}
                   title="Sevkiyatları silmeden yalnızca tüm yapılan okutmaları sıfırlar"
                 >
-                  <RefreshCw size={14} />
-                  <span>{loading === 'reset-scans' ? 'Sıfırlanıyor...' : 'Okutmaları Sıfırla'}</span>
+                  <RefreshCw size={13} />
+                  <span>{loading === 'reset-scans' ? 'Sıfırlanıyor...' : 'Okutma Sıfırla'}</span>
                 </button>
                 <button
                   type="button"
@@ -902,7 +942,7 @@ export default function OperationPage() {
                   onClick={handleReset}
                   disabled={loading === 'reset'}
                 >
-                  <RotateCcw size={14} />
+                  <RotateCcw size={13} />
                   <span>{loading === 'reset' ? 'Sıfırlanıyor...' : 'Sevkiyatı Sıfırla'}</span>
                 </button>
               </div>
@@ -911,15 +951,41 @@ export default function OperationPage() {
         </nav>
       </header>
 
-      <ManifestModal isOpen={showManifestModal} onClose={() => setShowManifestModal(false)} />
+      <ManifestModal
+        isOpen={showManifestModal}
+        onClose={() => setShowManifestModal(false)}
+        onOpenBlockedPrint={(gid) => {
+          setShowManifestModal(false);
+          setBlockedPrintMode('shipment');
+          setBlockedPrintGroupId(gid);
+          setShowBlockedPrintModal(true);
+        }}
+      />
       <StockModal
         isOpen={showStockModal}
         onClose={() => setShowStockModal(false)}
         onStockChanged={() => {
           api.getGroups().then(setGroups).catch(() => {});
         }}
+        onOpenBlockedPrint={() => {
+          setShowStockModal(false);
+          setBlockedPrintMode('stock');
+          setBlockedPrintGroupId('all');
+          setShowBlockedPrintModal(true);
+        }}
       />
       <MobileDownloadModal isOpen={showDownloadModal} onClose={() => setShowDownloadModal(false)} />
+      <SettingsModal
+        isOpen={showSettingsModal}
+        onClose={() => setShowSettingsModal(false)}
+        onSaved={setExcelHeaders}
+      />
+      <BlockedPrintModal
+        isOpen={showBlockedPrintModal}
+        onClose={() => setShowBlockedPrintModal(false)}
+        initialMode={blockedPrintMode}
+        initialGroupId={blockedPrintGroupId}
+      />
 
       {error && <div className="op-alert error">{error}</div>}
       {fileDrag && (
@@ -978,7 +1044,20 @@ export default function OperationPage() {
               </label>
             </div>
           </div>
-          <p className="op-file-hint">Excel'i bu ekrana da sürükleyebilirsin. Başlık gerekmez. Soldaki sütun referans, sağdaki miktar (sayı) olmalı. Dosya adı sevkiyatın adı olur.</p>
+          <p className="op-file-hint">
+            Aranan Stok Exceli Başlıkları:{' '}
+            <code>{excelHeaders.label_header}</code>, <code>{excelHeaders.reference_header}</code>,{' '}
+            <code>{excelHeaders.quantity_header}</code>, <code>{excelHeaders.fifo_date_header}</code>
+            {excelHeaders.blocked_header ? <>, <code>{excelHeaders.blocked_header}</code></> : null}{' '}
+            —{' '}
+            <button
+              type="button"
+              className="op-inline-link-btn"
+              onClick={() => setShowSettingsModal(true)}
+            >
+              Başlıkları Özelleştir (Ayarlar)
+            </button>
+          </p>
           {dropNote && <div className="op-alert ok">{dropNote}</div>}
 
           <div className="op-divider">Manuel hedef</div>
@@ -1207,14 +1286,27 @@ export default function OperationPage() {
                 <span>Eksik Stok: <strong>Yok</strong></span>
               </div>
             )}
-            <div className={`op-ov-pill ${totBlockedLbls > 0 ? 'is-blocked' : 'is-neutral'}`}>
-              <Lock size={13} />
-              <span>
-                {totBlockedLbls > 0
-                  ? <>Blokaj: <strong>{blockedRefs} Ref • {totBlockedLbls} Etiket</strong></>
-                  : <>Blokaj: <strong>Yok</strong></>}
-              </span>
-            </div>
+            {totBlockedLbls > 0 ? (
+              <button
+                type="button"
+                className="op-ov-pill is-blocked is-clickable"
+                onClick={() => {
+                  setBlockedPrintMode('shipment');
+                  setBlockedPrintGroupId('all');
+                  setShowBlockedPrintModal(true);
+                }}
+                title="Tıkla ve sevkiyatlardaki blokajlı etiketleri görüntüle / yazdır"
+              >
+                <Lock size={13} />
+                <span>Blokaj: <strong>{blockedRefs} Ref • {totBlockedLbls} Etiket</strong></span>
+                <Printer size={12} style={{ marginLeft: '0.2rem', opacity: 0.85 }} />
+              </button>
+            ) : (
+              <div className="op-ov-pill is-neutral">
+                <Lock size={13} />
+                <span>Blokaj: <strong>Yok</strong></span>
+              </div>
+            )}
           </div>
 
           <div className="op-shipment-table">
@@ -1233,6 +1325,11 @@ export default function OperationPage() {
                 onRenameGroup={handleRenameGroup}
                 onRemove={askRemoveGroup}
                 onResetScans={askResetGroupScans}
+                onPrintBlocked={(gid) => {
+                  setBlockedPrintMode('shipment');
+                  setBlockedPrintGroupId(gid);
+                  setShowBlockedPrintModal(true);
+                }}
                 dragging={dragGroupId === g.group_id}
                 dropTarget={dropGroupId === g.group_id && dragGroupId !== g.group_id}
                 onDragStart={setDragGroupId}

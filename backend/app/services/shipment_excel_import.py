@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.services.target_service import add_target
 from app.utils.excel_parser import (
     find_shipment_column_mapping,
+    get_excel_header_settings_dict,
     normalize_header,
     parse_reference,
     parse_quantity,
@@ -90,21 +91,45 @@ def has_reference_with_written_quantity(rows: list) -> bool:
     return False
 
 
-def locate_shipment_columns(rows: list) -> tuple[int, int, int] | None:
+def locate_shipment_columns(
+    rows: list,
+    custom_headers: dict[str, str] | None = None,
+) -> tuple[int, int, int] | None:
     """Referans ve miktar sütunlarını bulur.
 
     Başlık varsa onu kullanır. Başlık yoksa sayfanın herhangi bir yerindeki
     bitişik çifti alır: sol sütun referans, sağ sütun miktar.
     """
+    custom_norm_set: set[str] = set()
+    if custom_headers:
+        for k in ("shipment_reference_header", "shipment_quantity_header"):
+            val = custom_headers.get(k)
+            if val:
+                for p in str(val).split(","):
+                    nh = normalize_header(p)
+                    if nh:
+                        custom_norm_set.add(nh)
+
+    cfg = custom_headers or {}
+    is_custom_shipment = (
+        normalize_header(cfg.get("shipment_reference_header", "REFERANS")) != "REFERANS"
+        or normalize_header(cfg.get("shipment_quantity_header", "MİKTAR")) != "MIKTAR"
+    )
+
     for row_index, row in enumerate(rows):
-        mapping = find_shipment_column_mapping(list(row))
+        mapping = find_shipment_column_mapping(list(row), custom_headers=custom_headers)
         ref_idx = mapping.get("reference")
         qty_idx = mapping.get("quantity")
-        if ref_idx is None or qty_idx is None or qty_idx <= ref_idx:
+        if ref_idx is None or qty_idx is None or qty_idx == ref_idx:
             continue
         for later in rows[row_index + 1:]:
             if parse_reference(_cell(later, ref_idx)) and parse_quantity(_cell(later, qty_idx)) is not None:
                 return ref_idx, qty_idx, row_index + 1
+
+    # Kullanıcı özel Sevkiyat Excel'i üst başlığı tanımladıysa, başlığı tutmayan
+    # başka başlıklı bir Excel'i "başlıksız" diye kabul etme:
+    if is_custom_shipment:
+        return None
 
     width = max((len(row) for row in rows), default=0)
     best: tuple[int, int] | None = None
@@ -115,7 +140,7 @@ def locate_shipment_columns(rows: list) -> tuple[int, int, int] | None:
             quantity = parse_quantity(_cell(row, col + 1))
             if not reference or quantity is None:
                 continue
-            if normalize_header(reference) in {"REFERANS", "REF", "REFERENCE"}:
+            if normalize_header(reference) in ({"REFERANS", "REF", "REFERENCE"} | custom_norm_set):
                 continue
             score += 1
         if score and (best is None or score > best[0]):
@@ -165,12 +190,19 @@ def import_shipment_targets_excel(
         wb.close()
         return result
 
-    located = locate_shipment_columns(rows)
+    custom_headers = get_excel_header_settings_dict(db)
+    located = locate_shipment_columns(rows, custom_headers=custom_headers)
     if located is None:
-        if has_reference_with_written_quantity(rows):
+        is_custom_shipment = (
+            normalize_header(custom_headers.get("shipment_reference_header", "REFERANS")) != "REFERANS"
+            or normalize_header(custom_headers.get("shipment_quantity_header", "MİKTAR")) != "MIKTAR"
+        )
+        if not is_custom_shipment and has_reference_with_written_quantity(rows):
             result.errors.append(ShipmentRowError(row=0, reason=UNSUITABLE_SHIPMENT))
         else:
-            result.missing_columns.extend(["REFERANS", "MİKTAR"])
+            s_ref_hdr = custom_headers.get("shipment_reference_header") or "REFERANS"
+            s_qty_hdr = custom_headers.get("shipment_quantity_header") or "MİKTAR"
+            result.missing_columns.extend([s_ref_hdr, s_qty_hdr])
         wb.close()
         return result
 

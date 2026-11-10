@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { ArrowDown, ArrowUp, ArrowUpDown, Eye, EyeOff, Filter, RotateCcw, Search, TriangleAlert, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, Eye, EyeOff, Filter, Printer, RotateCcw, Search, TriangleAlert, X } from 'lucide-react';
 import { api, InventoryLabelItem, InventoryListResponse } from '../api';
 import Logo from './Logo';
 
@@ -7,6 +7,7 @@ interface StockModalProps {
   isOpen: boolean;
   onClose: () => void;
   onStockChanged?: () => void;
+  onOpenBlockedPrint?: () => void;
 }
 
 type StockFilter = 'all' | 'active' | 'hidden' | 'blocked';
@@ -27,7 +28,7 @@ function itemStatusText(item: InventoryLabelItem): 'OKUTULDU' | 'GİZLİ' | 'AKT
   return 'AKTİF';
 }
 
-export default function StockModal({ isOpen, onClose, onStockChanged }: StockModalProps) {
+export default function StockModal({ isOpen, onClose, onStockChanged, onOpenBlockedPrint }: StockModalProps) {
   const [data, setData] = useState<InventoryListResponse | null>(null);
   const [query, setQuery] = useState('');
   const [filterMode, setFilterMode] = useState<StockFilter>('all');
@@ -344,6 +345,18 @@ export default function StockModal({ isOpen, onClose, onStockChanged }: StockMod
             </div>
           </div>
           <div className="manifest-actions">
+            {onOpenBlockedPrint && (
+              <button
+                type="button"
+                className="op-btn secondary compact"
+                onClick={onOpenBlockedPrint}
+                style={{ fontWeight: 700, borderColor: '#f59e0b', color: '#fde68a', background: 'rgba(245, 158, 11, 0.14)' }}
+                title="Kayıtlı stok listesindeki tüm blokajlı etiketleri referans ve miktarlarıyla yazdır"
+              >
+                <Printer size={14} />
+                <span>Blokajlıları Yazdır ({data?.blocked_count ?? 0})</span>
+              </button>
+            )}
             {canHideCount > 0 && (
               <button
                 type="button"
