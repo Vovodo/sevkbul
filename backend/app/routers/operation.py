@@ -31,31 +31,34 @@ from app.ws_manager import ws_manager
 router = APIRouter(prefix="/api/shipment", tags=["operation"])
 
 
-_current_active_group_id: int | None = None
+_active_group_by_session: dict[int, int | None] = {}
 
 
 def get_current_active_group_id(db: Session, groups: list[dict] | None = None) -> int | None:
-    global _current_active_group_id
+    from app.session_context import get_current_session_id
+    sid = get_current_session_id()
     if groups is None:
         groups = get_shipment_groups(db)
     if not groups:
-        _current_active_group_id = None
+        _active_group_by_session[sid] = None
         return None
 
-    if _current_active_group_id is not None and any(g["group_id"] == _current_active_group_id for g in groups):
-        return _current_active_group_id
+    cur = _active_group_by_session.get(sid)
+    if cur is not None and any(g["group_id"] == cur for g in groups):
+        return cur
 
     first_incomplete = next(
         (g["group_id"] for g in groups if not g["is_complete"] and g["scanned_quantity"] < g["requested_quantity"]),
         groups[0]["group_id"]
     )
-    _current_active_group_id = first_incomplete
-    return _current_active_group_id
+    _active_group_by_session[sid] = first_incomplete
+    return first_incomplete
 
 
 def set_current_active_group_id(group_id: int | None):
-    global _current_active_group_id
-    _current_active_group_id = group_id
+    from app.session_context import get_current_session_id
+    sid = get_current_session_id()
+    _active_group_by_session[sid] = group_id
 
 
 def _broadcast_full_status(db: Session, event: str = "sync", extra: dict | None = None):

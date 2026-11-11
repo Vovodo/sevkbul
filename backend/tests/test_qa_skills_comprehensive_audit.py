@@ -1410,6 +1410,121 @@ class TestAdvancedExcelSecurityEngine:
         assert s3_files["stock"]["original_filename"] == "temiz_stok.xlsx"
 
 
+class TestMultiSessionWorkspaceIsolation:
+    """
+    Çoklu Oturum / Çalışma Alanı (Personel 1 - X Projesi, Personel 2 - Y Projesi) testleri:
+    - Her oturumun kendi bağımsız Stok Excel'ine, Sevkiyatlarına, Okutmalarına,
+      Excel Üst Başlık Ayarlarına ve Mini S3 dosyalarına sahip olması,
+    - Aynı barkod numaraları iki farklı oturumda yüklense bile çakışmaması,
+    - Bir oturumda yapılan sıfırlama / yeni stok yüklemenin diğer oturumu etkilememesi,
+    - Başka bir personelin mevcut oturuma katılıp (X-Session-Id) ortak okutma yapabilmesi.
+    """
+
+    @staticmethod
+    def _make_wb(headers: list[str], rows: list[tuple]) -> bytes:
+        wb = Workbook()
+        ws = wb.active
+        ws.append(headers)
+        for r in rows:
+            ws.append(list(r))
+        buf = BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    def test_multi_session_full_isolation_and_collaborative_scanning(self, client):
+        # 1) Personel 1 için 'X Projesi' ve Personel 2 için 'Y Projesi' oturumlarını oluştur
+        s1_res = client.post(
+            "/api/sessions",
+            json={"name": "X Projesi", "staff_name": "Personel 1", "description": "1. Hol"},
+        )
+        assert s1_res.status_code == 200
+        s1_id = s1_res.json()["id"]
+
+        s2_res = client.post(
+            "/api/sessions",
+            json={"name": "Y Projesi", "staff_name": "Personel 2", "description": "2. Hol"},
+        )
+        assert s2_res.status_code == 200
+        s2_id = s2_res.json()["id"]
+        assert s1_id != s2_id
+
+        h1 = {"X-Session-Id": str(s1_id)}
+        h2 = {"X-Session-Id": str(s2_id)}
+
+        # 2) İki oturuma da AYNI barkod numaralarını ('ORTAK-001', 'ORTAK-002') içeren
+        # ama farklı referans ve miktarlara sahip Stok Excel'leri yükle!
+        stock_x = self._make_wb(
+            ["ETİKET", "REFERANS", "MİKTAR", "X98FIFO_TARIH"],
+            [
+                ("ORTAK-001", "REF-X", 30, "01.05.2026 08:00"),
+                ("ORTAK-002", "REF-X", 30, "02.05.2026 08:00"),
+            ],
+        )
+        stock_y = self._make_wb(
+            ["ETİKET", "REFERANS", "MİKTAR", "X98FIFO_TARIH"],
+            [
+                ("ORTAK-001", "REF-Y", 50, "10.06.2026 08:00"),
+                ("ORTAK-002", "REF-Y", 50, "11.06.2026 08:00"),
+                ("ORTAK-003", "REF-Y", 50, "12.06.2026 08:00"),
+            ],
+        )
+
+        assert client.post(
+            "/api/inventory/import/stock?replace=true",
+            headers=h1,
+            files={"file": ("x_stok.xlsx", stock_x, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        ).status_code == 200
+
+        assert client.post(
+            "/api/inventory/import/stock?replace=true",
+            headers=h2,
+            files={"file": ("y_stok.xlsx", stock_y, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        ).status_code == 200
+
+        # Stok sayıları tamamen izole olmalı (X=2 etiket, Y=3 etiket)
+        assert client.get("/api/inventory/stats", headers=h1).json()["total_labels"] == 2
+        assert client.get("/api/inventory/stats", headers=h2).json()["total_labels"] == 3
+
+        # 3) Her iki oturumda ayrı sevkiyatlar oluştur
+        client.post("/api/shipment/targets", headers=h1, json={"reference": "REF-X", "target_quantity": 60})
+        client.post("/api/shipment/find", headers=h1)
+
+        client.post("/api/shipment/targets", headers=h2, json={"reference": "REF-Y", "target_quantity": 100})
+        client.post("/api/shipment/find", headers=h2)
+
+        # 4) Personel 1 (X Projesi) içinde ORTAK-001 okut (30 / 60)
+        sc_x1 = client.post("/api/shipment/scan", headers=h1, json={"label": "ORTAK-001"}).json()
+        assert sc_x1["success"] is True
+        assert sc_x1["scanned_quantity"] == 30.0
+        assert sc_x1["reference"] == "REF-X"
+
+        # Aynı barkod ('ORTAK-001') Personel 2 (Y Projesi) içinde de okutulabilmeli!
+        # Çünkü Y Projesi tamamen ayrı bir oturumdur!
+        sc_y1 = client.post("/api/shipment/scan", headers=h2, json={"label": "ORTAK-001"}).json()
+        assert sc_y1["success"] is True
+        assert sc_y1["scanned_quantity"] == 50.0
+        assert sc_y1["reference"] == "REF-Y"
+
+        # 5) Personel 2 (Y Projesi) kendi sevkiyatını sıfırladığında X Projesi hiç etkilenmemeli!
+        client.post("/api/shipment/reset", headers=h2)
+        assert len(client.get("/api/shipment/groups", headers=h2).json()) == 0
+        g_x = client.get("/api/shipment/groups", headers=h1).json()
+        assert len(g_x) == 1
+        assert g_x[0]["scanned_quantity"] == 30.0
+
+        # 6) Personel 3, X Projesi oturumuna (h1) katılır ve kalan ORTAK-002 etiketini okutarak X Projesini tamamlar!
+        sc_x2 = client.post("/api/shipment/scan", headers=h1, json={"label": "ORTAK-002"}).json()
+        assert sc_x2["success"] is True
+        assert sc_x2["is_complete"] is True
+        assert sc_x2["scanned_quantity"] == 60.0
+
+        # 7) Y Projesi oturumu silindiğinde X Projesi ve Mini S3 dosyası sağlam kalmalı
+        assert client.delete(f"/api/sessions/{s2_id}").status_code == 200
+        s3_x = {f["slot"]: f for f in client.get("/api/inventory/storage/files", headers=h1).json()}
+        assert s3_x["stock"]["original_filename"] == "x_stok.xlsx"
+
+
+
 
 
 

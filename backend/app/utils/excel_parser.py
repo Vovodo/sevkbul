@@ -89,7 +89,7 @@ def get_excel_header_settings_dict(db: Any) -> dict[str, str]:
         return dict(DEFAULT_EXCEL_HEADERS)
     try:
         from app.models import ExcelHeaderSettings
-        row = db.query(ExcelHeaderSettings).filter(ExcelHeaderSettings.id == 1).first()
+        row = db.query(ExcelHeaderSettings).first()
         if row is None:
             return dict(DEFAULT_EXCEL_HEADERS)
         return {

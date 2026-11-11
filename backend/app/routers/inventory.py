@@ -442,10 +442,9 @@ def update_excel_headers_settings(
         )
 
     ExcelHeaderSettings.__table__.create(bind=db.get_bind(), checkfirst=True)
-    row = db.query(ExcelHeaderSettings).filter(ExcelHeaderSettings.id == 1).first()
+    row = db.query(ExcelHeaderSettings).first()
     if row is None:
         row = ExcelHeaderSettings(
-            id=1,
             label_header=label_h,
             reference_header=ref_h,
             quantity_header=qty_h,
@@ -474,7 +473,7 @@ def update_excel_headers_settings(
 def reset_excel_headers_settings(db: Session = Depends(get_db)):
     """Excel üst başlık ayarlarını fabrika varsayılanlarına döndürür."""
     ExcelHeaderSettings.__table__.create(bind=db.get_bind(), checkfirst=True)
-    row = db.query(ExcelHeaderSettings).filter(ExcelHeaderSettings.id == 1).first()
+    row = db.query(ExcelHeaderSettings).first()
     if row is not None:
         row.label_header = DEFAULT_EXCEL_HEADERS["label_header"]
         row.reference_header = DEFAULT_EXCEL_HEADERS["reference_header"]

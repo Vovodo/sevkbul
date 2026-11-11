@@ -7,12 +7,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 import app.database as database
 import app.models  # Tablo tanımlarını yükle
-from app.routers import inventory, shipments, scan, operation
+from app.routers import inventory, shipments, scan, operation, sessions
 from app.services.lookup_cache import lookup_cache
 from app.services.fifo_quota import backfill_missing_quotas
+from app.session_context import set_current_session_id, reset_current_session_id, DEFAULT_SESSION_ID
 from app.ws_manager import ws_manager
 
 import asyncio
+import json
 
 
 def _ensure_inventory_blocked() -> None:
@@ -114,6 +116,57 @@ def _purge_cancelled_shipments() -> None:
         conn.execute(text("DELETE FROM shipments WHERE UPPER(CAST(status AS VARCHAR)) = 'CANCELLED'"))
 
 
+def _ensure_multi_session_columns() -> None:
+    """
+    Mevcut tablolara 'session_id' sütununu ve oturum bazlı indeksleri ekler.
+    PostgreSQL'de eski tekil 'ix_inventory_labels_label' kısıtını kaldırıp
+    (session_id, label) birleşik tekil indeksine dönüştürür.
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(database.engine)
+    existing_tables = set(inspector.get_table_names())
+    target_tables = (
+        "inventory_labels",
+        "shipments",
+        "scan_logs",
+        "shipment_targets",
+        "excel_header_settings",
+    )
+    for tbl in target_tables:
+        if tbl not in existing_tables:
+            continue
+        cols = {c["name"] for c in inspector.get_columns(tbl)}
+        if "session_id" not in cols:
+            with database.engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN session_id INTEGER NOT NULL DEFAULT 1"))
+                conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{tbl}_session_id ON {tbl} (session_id)"))
+
+    # PostgreSQL üzerinde eski tekil 'ix_inventory_labels_label' indeksini (session_id, label) yapısına geçir
+    if "inventory_labels" in existing_tables and not str(database.engine.url).startswith("sqlite"):
+        try:
+            with database.engine.begin() as conn:
+                conn.execute(text("ALTER TABLE inventory_labels DROP CONSTRAINT IF EXISTS inventory_labels_label_key"))
+                # Eğer ix_inventory_labels_label unique ise yeniden non-unique oluştur
+                idx_rows = conn.execute(
+                    text(
+                        "SELECT indexdef FROM pg_indexes "
+                        "WHERE tablename = 'inventory_labels' AND indexname = 'ix_inventory_labels_label'"
+                    )
+                ).fetchall()
+                if idx_rows and "UNIQUE" in (idx_rows[0][0] or "").upper():
+                    conn.execute(text("DROP INDEX IF EXISTS ix_inventory_labels_label"))
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_inventory_labels_label ON inventory_labels (label)"))
+                conn.execute(
+                    text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS uq_session_inventory_label "
+                        "ON inventory_labels (session_id, label)"
+                    )
+                )
+        except Exception as exc:
+            print(f"[DB] uq_session_inventory_label indeks güncelleme bilgisi: {exc}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # WebSocket broadcast için ana event loop referansını kaydet
@@ -121,6 +174,7 @@ async def lifespan(app: FastAPI):
     # Veritabanı tabloları yoksa otomatik oluştur (hata olsa bile sunucu 503 vermesin)
     try:
         database.Base.metadata.create_all(bind=database.engine)
+        _ensure_multi_session_columns()
         _ensure_target_source_name()
         _ensure_shipment_stock_note()
         _ensure_shipment_sort_order()
@@ -128,7 +182,9 @@ async def lifespan(app: FastAPI):
         _purge_cancelled_shipments()
         db = database.SessionLocal()
         try:
+            from app.routers.sessions import ensure_default_work_session
             from app.services.s3_storage import hydrate_storage_on_startup
+            ensure_default_work_session(db)
             hydrate_storage_on_startup(db)
             backfill_missing_quotas(db)
             lookup_cache.load_all_active(db)
@@ -160,10 +216,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(sessions.router)
 app.include_router(inventory.router)
 app.include_router(shipments.router)
 app.include_router(scan.router)
 app.include_router(operation.router)
+
+
+@app.middleware("http")
+async def session_context_middleware(request: Request, call_next):
+    """
+    Her HTTP isteğinde X-Session-Id başlığını veya ?session_id= sorgu parametresini
+    okur ve aktif çalışma oturumu bağlamını (ContextVar) ayarlar.
+    Belirtilmemişse varsayılan oturum (1) kullanılır.
+    """
+    raw_sid = request.headers.get("X-Session-Id") or request.query_params.get("session_id")
+    sid = DEFAULT_SESSION_ID
+    if raw_sid:
+        try:
+            parsed = int(raw_sid)
+            if parsed > 0:
+                sid = parsed
+        except (ValueError, TypeError):
+            sid = DEFAULT_SESSION_ID
+
+    token = set_current_session_id(sid)
+    try:
+        return await call_next(request)
+    finally:
+        reset_current_session_id(token)
 
 # APK ve statik dosyaları serve et (backend/static/ klasöründen)
 import os
@@ -239,15 +320,49 @@ def download_apk():
 
 
 
+def _broadcast_sessions_snapshot() -> None:
+    """Tüm bağlı ekranlara güncel oturum listesini ve bağlı cihaz sayılarını yayınlar."""
+    try:
+        from app.routers.sessions import list_work_sessions_with_stats
+        db = database.SessionLocal()
+        try:
+            items = [s.model_dump() for s in list_work_sessions_with_stats(db)]
+            ws_manager.broadcast_sync("sessions_updated", items, all_rooms=True)
+        finally:
+            db.close()
+    except Exception:
+        pass
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """Gerçek zamanlı canlı güncelleme WebSocket endpoint'i."""
-    await ws_manager.connect(websocket)
+    """Oturum (session_id) odasına duyarlı gerçek zamanlı canlı güncelleme WebSocket endpoint'i."""
+    raw_sid = websocket.query_params.get("session_id")
+    sid = DEFAULT_SESSION_ID
+    if raw_sid:
+        try:
+            parsed = int(raw_sid)
+            if parsed > 0:
+                sid = parsed
+        except (ValueError, TypeError):
+            sid = DEFAULT_SESSION_ID
+
+    await ws_manager.connect(websocket, session_id=sid)
+    _broadcast_sessions_snapshot()
     try:
         while True:
-            # İstemciden gelen ping/pong mesajlarını dinle (bağlantıyı canlı tut)
-            await websocket.receive_text()
+            msg_text = await websocket.receive_text()
+            try:
+                payload = json.loads(msg_text)
+                if isinstance(payload, dict) and payload.get("action") == "switch_session":
+                    new_sid = int(payload.get("session_id") or DEFAULT_SESSION_ID)
+                    ws_manager.switch_room(websocket, new_sid)
+                    _broadcast_sessions_snapshot()
+            except Exception:
+                pass
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket)
+        _broadcast_sessions_snapshot()
     except Exception:
         ws_manager.disconnect(websocket)
+        _broadcast_sessions_snapshot()

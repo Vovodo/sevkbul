@@ -303,4 +303,31 @@ class StoredExcelFileSchema(BaseModel):
     download_url: str
 
 
+class WorkSessionCreateSchema(BaseModel):
+    name: str
+    staff_name: str | None = None
+    description: str | None = None
+
+
+class WorkSessionUpdateSchema(BaseModel):
+    name: str | None = None
+    staff_name: str | None = None
+    description: str | None = None
+
+
+class WorkSessionSchema(BaseModel):
+    id: int
+    name: str
+    staff_name: str | None = None
+    description: str | None = None
+    total_labels: int = 0
+    shipment_count: int = 0
+    scanned_quantity: float = 0.0
+    requested_quantity: float = 0.0
+    connected_clients: int = 0
+    created_at: str
+    updated_at: str
+
+
+
 

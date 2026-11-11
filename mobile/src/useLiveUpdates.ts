@@ -1,23 +1,40 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { getApiBase } from './api';
+import { getApiBase, getActiveSessionId } from './api';
 
-export function getWsUrl(): string {
+export function getWsUrl(sessionId?: number): string {
+  const sid = sessionId ?? getActiveSessionId();
   const base = getApiBase();
   if (base) {
     // Render / Production: https://xxx.rfqcollector.com → wss://xxx.rfqcollector.com/ws
-    return base.replace(/^http/, 'ws') + '/ws';
+    return `${base.replace(/^http/, 'ws')}/ws?session_id=${sid}`;
   }
   if (typeof window !== 'undefined') {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${window.location.host}/ws`;
+    return `${proto}//${window.location.host}/ws?session_id=${sid}`;
   }
-  return 'wss://sevkbulapi.rfqcollector.com/ws';
+  return `wss://sevkbulapi.rfqcollector.com/ws?session_id=${sid}`;
 }
 
-export type WsEventType = 'scan' | 'undo' | 'reset' | 'scans_reset' | 'group_scans_reset' | 'find' | 'target_add' | 'target_clear' | 'target_import' | 'stock_import' | 'group_delete' | 'recalculate' | 'recalculate_progress' | 'excel_headers_updated';
+export type WsEventType =
+  | 'scan'
+  | 'undo'
+  | 'reset'
+  | 'scans_reset'
+  | 'group_scans_reset'
+  | 'find'
+  | 'target_add'
+  | 'target_clear'
+  | 'target_import'
+  | 'stock_import'
+  | 'group_delete'
+  | 'recalculate'
+  | 'recalculate_progress'
+  | 'excel_headers_updated'
+  | 'sessions_updated';
 
 export interface WsMessage {
   event: WsEventType;
+  session_id?: number;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any;
 }
@@ -25,23 +42,23 @@ export interface WsMessage {
 type WsMessageHandler = (msg: WsMessage) => void;
 
 /**
- * Gerçek zamanlı güncelleme WebSocket hook'u.
- * Otomatik yeniden bağlanma desteği ile.
+ * Oturum (session_id) odasına duyarlı gerçek zamanlı WebSocket hook'u.
  */
-export function useLiveUpdates(onMessage: WsMessageHandler): boolean {
+export function useLiveUpdates(onMessage: WsMessageHandler, sessionId?: number): boolean {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handlerRef = useRef(onMessage);
+  const sessionIdRef = useRef<number>(sessionId ?? getActiveSessionId());
   const [connected, setConnected] = useState(false);
   handlerRef.current = onMessage;
+  sessionIdRef.current = sessionId ?? getActiveSessionId();
 
   const connect = useCallback(() => {
-    // Halihazırda bağlıysa tekrar bağlanma
     if (wsRef.current && (wsRef.current.readyState === WebSocket.CONNECTING || wsRef.current.readyState === WebSocket.OPEN)) {
       return;
     }
 
-    const url = getWsUrl();
+    const url = getWsUrl(sessionIdRef.current);
     const ws = new WebSocket(url);
 
     ws.onopen = () => {
@@ -68,7 +85,6 @@ export function useLiveUpdates(onMessage: WsMessageHandler): boolean {
     };
 
     ws.onerror = () => {
-      // Hata durumunda bağlantıyı kapat (onclose yeniden bağlanmayı tetikleyecek)
       ws.close();
     };
 
@@ -76,9 +92,14 @@ export function useLiveUpdates(onMessage: WsMessageHandler): boolean {
   }, []);
 
   useEffect(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN && sessionId != null) {
+      wsRef.current.send(JSON.stringify({ action: 'switch_session', session_id: sessionId }));
+    }
+  }, [sessionId]);
+
+  useEffect(() => {
     connect();
 
-    // 25 saniyede bir ping gönder (bağlantıyı canlı tut — Render 60s idle timeout)
     const pingInterval = setInterval(() => {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send('ping');

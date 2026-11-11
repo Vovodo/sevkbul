@@ -22,9 +22,44 @@ export function getApiBase(): string {
 
 export const API_BASE = getApiBase();
 
+const SESSION_STORAGE_KEY = 'sevkbul_active_session_id';
+
+export function getActiveSessionId(): number {
+  if (typeof window !== 'undefined') {
+    const params = new URLSearchParams(window.location.search);
+    const urlSid = params.get('session') || params.get('session_id');
+    if (urlSid) {
+      const parsed = Number(urlSid);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        localStorage.setItem(SESSION_STORAGE_KEY, String(parsed));
+        return parsed;
+      }
+    }
+    const saved = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (saved) {
+      const parsed = Number(saved);
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+  }
+  return 1;
+}
+
+export function setActiveSessionId(sessionId: number): void {
+  const sid = Number.isFinite(sessionId) && sessionId > 0 ? Math.floor(sessionId) : 1;
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(SESSION_STORAGE_KEY, String(sid));
+  }
+}
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, options);
+  const headers = new Headers(options?.headers || {});
+  if (!headers.has('X-Session-Id')) {
+    headers.set('X-Session-Id', String(getActiveSessionId()));
+  }
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers,
+  });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: 'Bir hata oluştu' }));
     const detail = typeof err.detail === 'string' ? err.detail : 'Bir hata oluştu';
@@ -231,14 +266,54 @@ export interface StoredExcelFileItem {
   download_url: string;
 }
 
+export interface WorkSessionItem {
+  id: number;
+  name: string;
+  staff_name?: string | null;
+  description?: string | null;
+  total_labels: number;
+  shipment_count: number;
+  scanned_quantity: number;
+  requested_quantity: number;
+  connected_clients: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export const api = {
   healthCheck: () =>
     request<{ status: string; service: string; version: string; features: string[] }>('/api/health'),
 
+  getSessions: () =>
+    request<WorkSessionItem[]>('/api/sessions'),
+
+  createSession: (payload: { name: string; staff_name?: string; description?: string }) =>
+    request<WorkSessionItem>('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+
+  updateSession: (sessionId: number, payload: { name?: string; staff_name?: string; description?: string }) =>
+    request<WorkSessionItem>(`/api/sessions/${sessionId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+
+  deleteSession: (sessionId: number) =>
+    request<{ deleted: boolean; session_id: number; sessions: WorkSessionItem[] }>(`/api/sessions/${sessionId}`, {
+      method: 'DELETE',
+    }),
+
   importStock: async (file: File, replace: boolean = true) => {
     const form = new FormData();
     form.append('file', file);
-    const res = await fetch(`${API_BASE}/api/inventory/import/stock?replace=${replace}`, { method: 'POST', body: form });
+    const res = await fetch(`${API_BASE}/api/inventory/import/stock?replace=${replace}`, {
+      method: 'POST',
+      headers: { 'X-Session-Id': String(getActiveSessionId()) },
+      body: form,
+    });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: 'Import hatası' }));
       const detail = err.detail || 'Import hatası';
@@ -248,8 +323,12 @@ export const api = {
     return res.json() as Promise<ImportResult>;
   },
 
-  exportManifestExcelUrl: (groupId?: number | null) =>
-    `${API_BASE}/api/shipment/export${groupId != null ? `?group_id=${groupId}` : ''}`,
+  exportManifestExcelUrl: (groupId?: number | null) => {
+    const params = new URLSearchParams();
+    params.set('session_id', String(getActiveSessionId()));
+    if (groupId != null) params.set('group_id', String(groupId));
+    return `${API_BASE}/api/shipment/export?${params.toString()}`;
+  },
 
   getInventoryStats: () =>
     request<{ total_labels: number; total_references: number; blocked_labels?: number; unblocked_labels?: number; hidden_labels?: number }>('/api/inventory/stats'),
@@ -285,7 +364,11 @@ export const api = {
   importTargetsExcel: async (file: File) => {
     const form = new FormData();
     form.append('file', file);
-    const res = await fetch(`${API_BASE}/api/shipment/targets/import`, { method: 'POST', body: form });
+    const res = await fetch(`${API_BASE}/api/shipment/targets/import`, {
+      method: 'POST',
+      headers: { 'X-Session-Id': String(getActiveSessionId()) },
+      body: form,
+    });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: 'Import hatası' }));
       const detail = err.detail || 'Import hatası';
@@ -415,6 +498,7 @@ export const api = {
     form.append('file', file);
     const res = await fetch(`${API_BASE}/api/inventory/excel-headers/inspect`, {
       method: 'POST',
+      headers: { 'X-Session-Id': String(getActiveSessionId()) },
       body: form,
     });
     if (!res.ok) {
@@ -428,5 +512,5 @@ export const api = {
     request<StoredExcelFileItem[]>('/api/inventory/storage/files'),
 
   storedExcelDownloadUrl: (slot: string) =>
-    `${API_BASE}/api/inventory/storage/files/${encodeURIComponent(slot)}/download`,
+    `${API_BASE}/api/inventory/storage/files/${encodeURIComponent(slot)}/download?session_id=${getActiveSessionId()}`,
 };

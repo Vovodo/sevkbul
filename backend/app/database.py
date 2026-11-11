@@ -1,8 +1,9 @@
 from urllib.parse import urlparse, urlunparse
 from sqlalchemy import create_engine, event, text
-from sqlalchemy.orm import sessionmaker, DeclarativeBase
+from sqlalchemy.orm import sessionmaker, DeclarativeBase, Session, ORMExecuteState, with_loader_criteria
 
 from app.config import settings
+from app.session_context import get_current_session_id
 
 
 def _normalize_and_resolve_db_url(raw_url: str) -> str:
@@ -133,6 +134,33 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 class Base(DeclarativeBase):
     pass
+
+
+@event.listens_for(Session, "do_orm_execute")
+def _apply_session_isolation_criteria(execute_state: ORMExecuteState) -> None:
+    """
+    Tüm SELECT, UPDATE ve DELETE sorgularına otomatik olarak
+    aktif çalışma oturumu (session_id) filtresini enjekte eder.
+    Genel özet sorguları için .execution_options(ignore_session_filter=True) kullanılabilir.
+    """
+    if execute_state.execution_options.get("ignore_session_filter", False):
+        return
+    if not (execute_state.is_select or execute_state.is_update or execute_state.is_delete):
+        return
+
+    from app.models import InventoryLabel, Shipment, ShipmentTarget, ScanLog, ExcelHeaderSettings
+
+    sid = get_current_session_id()
+    stmt = execute_state.statement
+    for model_cls in (InventoryLabel, Shipment, ShipmentTarget, ScanLog, ExcelHeaderSettings):
+        stmt = stmt.options(
+            with_loader_criteria(
+                model_cls,
+                model_cls.session_id == sid,
+                include_aliases=True,
+            )
+        )
+    execute_state.statement = stmt
 
 
 def get_db():

@@ -7,11 +7,26 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.models import StoredExcelFile
+from app.session_context import get_current_session_id, DEFAULT_SESSION_ID
 
 EXCEL_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 # Backend kök dizini altında storage/s3 klasörü
 BASE_STORAGE_DIR = Path(__file__).resolve().parent.parent.parent / "storage" / "s3"
+
+
+def _scoped_slot(slot: str, session_id: int | None = None) -> tuple[str, str]:
+    """
+    Oturum bazlı slot anahtarını ve görüntülenen baz slot adını döner:
+    - session_id == 1 için geriye uyumlu ('stock', 'stock')
+    - session_id > 1 için ('s2_stock', 'stock')
+    """
+    base = re.sub(r"^s\d+_", "", slot.strip().lower())
+    base = re.sub(r"[^a-z0-9_\-]", "", base) or "default"
+    sid = int(session_id) if session_id is not None else get_current_session_id()
+    if sid == DEFAULT_SESSION_ID:
+        return base, base
+    return f"s{sid}_{base}", base
 
 
 def _sanitize_filename(filename: str | None, fallback: str = "dosya.xlsx") -> str:
@@ -22,16 +37,16 @@ def _sanitize_filename(filename: str | None, fallback: str = "dosya.xlsx") -> st
     return cleaned[:200] if cleaned else fallback
 
 
-def _slot_dir(slot: str) -> Path:
-    safe_slot = re.sub(r"[^a-z0-9_\-]", "", slot.lower()) or "default"
+def _slot_dir(db_slot: str) -> Path:
+    safe_slot = re.sub(r"[^a-z0-9_\-]", "", db_slot.lower()) or "default"
     d = BASE_STORAGE_DIR / safe_slot
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
-def _cleanup_slot_files(slot: str, old_local_path: str | None = None) -> None:
+def _cleanup_slot_files(db_slot: str, old_local_path: str | None = None) -> None:
     """Belirtilen slot klasöründeki tüm eski Excel dosyalarını diskten siler (şişmeyi önler)."""
-    slot_folder = _slot_dir(slot)
+    slot_folder = _slot_dir(db_slot)
     for item in slot_folder.iterdir():
         if item.is_file():
             try:
@@ -55,30 +70,32 @@ def put_excel_object(
     content: bytes,
     row_count: int = 0,
     content_type: str = EXCEL_MIME,
+    session_id: int | None = None,
 ) -> StoredExcelFile:
     """
-    Yüklenen Excel dosyasını Mini S3 alanına kaydeder ve konum/içerik bilgisini PostgreSQL'e yazar.
-    Aynı slot ('stock' veya 'shipment') için önceki dosya hem diskten hem veritabanından silinir.
+    Yüklenen Excel dosyasını aktif oturumun Mini S3 alanına kaydeder ve PostgreSQL'e yazar.
+    Aynı oturum ve slot ('stock' veya 'shipment') için önceki dosya hem diskten hem veritabanından silinir.
     """
     StoredExcelFile.__table__.create(bind=db.get_bind(), checkfirst=True)
+    db_slot, base_slot = _scoped_slot(slot, session_id=session_id)
 
-    safe_name = _sanitize_filename(filename, fallback=f"{slot}.xlsx")
-    slot_folder = _slot_dir(slot)
+    safe_name = _sanitize_filename(filename, fallback=f"{base_slot}.xlsx")
+    slot_folder = _slot_dir(db_slot)
 
-    existing = db.query(StoredExcelFile).filter(StoredExcelFile.slot == slot).first()
-    _cleanup_slot_files(slot, existing.local_path if existing else None)
+    existing = db.query(StoredExcelFile).filter(StoredExcelFile.slot == db_slot).first()
+    _cleanup_slot_files(db_slot, existing.local_path if existing else None)
 
     target_file = slot_folder / safe_name
     target_file.write_bytes(content)
 
-    rel_path = f"storage/s3/{slot}/{safe_name}"
-    s3_key = f"s3://sevkbul/{slot}/{safe_name}"
+    rel_path = f"storage/s3/{db_slot}/{safe_name}"
+    s3_key = f"s3://sevkbul/{db_slot}/{safe_name}"
     digest = hashlib.sha256(content).hexdigest()
     now = datetime.utcnow()
 
     if existing is None:
         existing = StoredExcelFile(
-            slot=slot,
+            slot=db_slot,
             original_filename=safe_name,
             storage_key=s3_key,
             local_path=rel_path,
@@ -106,15 +123,16 @@ def put_excel_object(
     return existing
 
 
-def get_excel_object(db: Session, slot: str) -> StoredExcelFile | None:
-    """Slot'a ait Excel kaydını döner; diskte yoksa PostgreSQL'deki binary veriden diske geri yazar."""
+def get_excel_object(db: Session, slot: str, session_id: int | None = None) -> StoredExcelFile | None:
+    """Aktif oturumdaki slot'a ait Excel kaydını döner; diskte yoksa PostgreSQL'den diske geri yazar."""
     StoredExcelFile.__table__.create(bind=db.get_bind(), checkfirst=True)
-    row = db.query(StoredExcelFile).filter(StoredExcelFile.slot == slot).first()
+    db_slot, base_slot = _scoped_slot(slot, session_id=session_id)
+    row = db.query(StoredExcelFile).filter(StoredExcelFile.slot == db_slot).first()
     if row is None:
         return None
 
-    slot_folder = _slot_dir(slot)
-    disk_file = slot_folder / _sanitize_filename(row.original_filename, f"{slot}.xlsx")
+    slot_folder = _slot_dir(db_slot)
+    disk_file = slot_folder / _sanitize_filename(row.original_filename, f"{base_slot}.xlsx")
     if not disk_file.is_file() and row.file_data:
         try:
             disk_file.write_bytes(row.file_data)
@@ -123,21 +141,32 @@ def get_excel_object(db: Session, slot: str) -> StoredExcelFile | None:
     return row
 
 
-def list_excel_objects(db: Session) -> list[dict]:
-    """Kayıtlı tüm Mini S3 Excel dosyalarının üstverisini döner (binary veri hariç)."""
+def list_excel_objects(db: Session, session_id: int | None = None) -> list[dict]:
+    """Aktif oturuma ait Mini S3 Excel dosyalarının üstverisini döner."""
     StoredExcelFile.__table__.create(bind=db.get_bind(), checkfirst=True)
-    rows = db.query(StoredExcelFile).order_by(StoredExcelFile.slot.asc()).all()
+    sid = int(session_id) if session_id is not None else get_current_session_id()
+    expected_slots = {
+        _scoped_slot("stock", session_id=sid)[0]: "stock",
+        _scoped_slot("shipment", session_id=sid)[0]: "shipment",
+    }
+    rows = (
+        db.query(StoredExcelFile)
+        .filter(StoredExcelFile.slot.in_(list(expected_slots.keys())))
+        .order_by(StoredExcelFile.slot.asc())
+        .all()
+    )
     out: list[dict] = []
     for r in rows:
+        base_slot = expected_slots.get(r.slot, r.slot)
         slot_folder = _slot_dir(r.slot)
-        disk_file = slot_folder / _sanitize_filename(r.original_filename, f"{r.slot}.xlsx")
+        disk_file = slot_folder / _sanitize_filename(r.original_filename, f"{base_slot}.xlsx")
         if not disk_file.is_file() and r.file_data:
             try:
                 disk_file.write_bytes(r.file_data)
             except OSError:
                 pass
         out.append({
-            "slot": r.slot,
+            "slot": base_slot,
             "original_filename": r.original_filename,
             "storage_key": r.storage_key,
             "local_path": r.local_path,
@@ -147,21 +176,28 @@ def list_excel_objects(db: Session) -> list[dict]:
             "row_count": r.row_count,
             "uploaded_at": r.uploaded_at.strftime("%d.%m.%Y %H:%M:%S") if r.uploaded_at else "",
             "exists_on_disk": disk_file.is_file(),
-            "download_url": f"/api/inventory/storage/files/{r.slot}/download",
+            "download_url": f"/api/inventory/storage/files/{base_slot}/download?session_id={sid}",
         })
     return out
 
 
-def delete_excel_object(db: Session, slot: str) -> bool:
+def delete_excel_object(db: Session, slot: str, session_id: int | None = None) -> bool:
     """Slot'taki Excel dosyasını hem diskten hem PostgreSQL'den siler."""
     StoredExcelFile.__table__.create(bind=db.get_bind(), checkfirst=True)
-    row = db.query(StoredExcelFile).filter(StoredExcelFile.slot == slot).first()
-    _cleanup_slot_files(slot, row.local_path if row else None)
+    db_slot, _ = _scoped_slot(slot, session_id=session_id)
+    row = db.query(StoredExcelFile).filter(StoredExcelFile.slot == db_slot).first()
+    _cleanup_slot_files(db_slot, row.local_path if row else None)
     if row is None:
         return False
     db.delete(row)
     db.commit()
     return True
+
+
+def delete_all_session_excel_objects(db: Session, session_id: int) -> None:
+    """Bir oturum silindiğinde o oturuma ait tüm Mini S3 dosyalarını temizler."""
+    for base in ("stock", "shipment"):
+        delete_excel_object(db, base, session_id=session_id)
 
 
 def hydrate_storage_on_startup(db: Session) -> None:

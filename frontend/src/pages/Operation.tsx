@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Check, ClipboardList, Copy, Crosshair, Layers, Lock, LockOpen, Maximize2, PackageSearch, Printer, Radio, RefreshCw, RotateCcw, Settings, SlidersHorizontal, Smartphone, TriangleAlert, X } from 'lucide-react';
-import { api, ShipmentGroup, ShipmentProgress, ScanResponse, ShipmentTarget, RecentScan, RecalculateStatus, ExcelHeaderSettings } from '../api';
+import { Check, ClipboardList, Copy, Crosshair, Layers, Lock, LockOpen, Maximize2, PackageSearch, Printer, Radio, RefreshCw, RotateCcw, Settings, SlidersHorizontal, Smartphone, TriangleAlert, Users, X } from 'lucide-react';
+import { api, ShipmentGroup, ShipmentProgress, ScanResponse, ShipmentTarget, RecentScan, RecalculateStatus, ExcelHeaderSettings, WorkSessionItem, getActiveSessionId, setActiveSessionId } from '../api';
 import { playScanSound, initAudio, ScanResultType } from '../audio';
 import SoundSettings from '../components/SoundSettings';
 import ManifestModal from '../components/ManifestModal';
@@ -8,6 +8,7 @@ import StockModal from '../components/StockModal';
 import MobileDownloadModal from '../components/MobileDownloadModal';
 import SettingsModal, { DEFAULT_EXCEL_HEADER_SETTINGS } from '../components/SettingsModal';
 import BlockedPrintModal, { BlockedPrintMode } from '../components/BlockedPrintModal';
+import SessionModal from '../components/SessionModal';
 import ShipmentCard from '../components/ShipmentCard';
 import Logo from '../components/Logo';
 import { ScanMark, ScanNotice } from '../components/ScanNotice';
@@ -24,6 +25,9 @@ export default function OperationPage() {
   const [showDownloadModal, setShowDownloadModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showBlockedPrintModal, setShowBlockedPrintModal] = useState(false);
+  const [showSessionModal, setShowSessionModal] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState<number>(() => getActiveSessionId());
+  const [sessions, setSessions] = useState<WorkSessionItem[]>([]);
   const [blockedPrintMode, setBlockedPrintMode] = useState<BlockedPrintMode>('stock');
   const [blockedPrintGroupId, setBlockedPrintGroupId] = useState<number | 'all'>('all');
   const [excelHeaders, setExcelHeaders] = useState<ExcelHeaderSettings>(DEFAULT_EXCEL_HEADER_SETTINGS);
@@ -72,6 +76,8 @@ export default function OperationPage() {
   const recalcPoll = useRef<number | null>(null);
   const recalcJob = useRef<number | null>(null);
   const recalcHide = useRef<number | null>(null);
+  const currentSessionIdRef = useRef<number>(currentSessionId);
+  currentSessionIdRef.current = currentSessionId;
 
   // Aktif seçili sevkiyat grubunu otomatik belirle
   useEffect(() => {
@@ -161,6 +167,42 @@ export default function OperationPage() {
     return () => document.body.classList.remove('fs-active');
   }, [isFullscreen, focusScanInput]);
 
+  const loadActiveSessionWorkspace = useCallback(async (sid: number) => {
+    setActiveSessionId(sid);
+    setCurrentSessionId(sid);
+    setError('');
+    setDropNote('');
+    setLastScan(null);
+    setRecentScans([]);
+
+    try {
+      const [stats, tgs, grps, actRes, hdrs, sessList] = await Promise.all([
+        api.getInventoryStats(),
+        api.getTargets(),
+        api.getGroups(),
+        api.getActiveGroup(),
+        api.getExcelHeaders(),
+        api.getSessions(),
+      ]);
+      setStockLoaded(stats.total_labels > 0);
+      setStockCount(stats.total_labels);
+      setTargets(tgs);
+      setGroups(grps);
+      if (grps.length > 0) {
+        setPhase('scanning');
+        setShowSetup(false);
+      } else {
+        setPhase('setup');
+        setShowSetup(true);
+      }
+      setSelectedGroupId(actRes.selected_group_id ?? null);
+      setExcelHeaders(hdrs);
+      setSessions(sessList);
+    } catch {
+      // ignore
+    }
+  }, []);
+
   useEffect(() => {
     initAudio();
     api.healthCheck()
@@ -172,25 +214,8 @@ export default function OperationPage() {
         }
       })
       .catch(() => setError('Backend bağlantısı kurulamadı.'));
-    api.getInventoryStats().then(s => {
-      setStockLoaded(s.total_labels > 0);
-      setStockCount(s.total_labels);
-    }).catch(() => {});
-    api.getTargets().then(setTargets).catch(() => {});
-    api.getGroups().then(g => {
-      if (g.length > 0) {
-        setGroups(g);
-        setPhase('scanning');
-        setShowSetup(false);
-      }
-    }).catch(() => {});
-    api.getActiveGroup().then(res => {
-      if (res.selected_group_id != null) {
-        setSelectedGroupId(res.selected_group_id);
-      }
-    }).catch(() => {});
-    api.getExcelHeaders().then(setExcelHeaders).catch(() => {});
-  }, []);
+    void loadActiveSessionWorkspace(currentSessionIdRef.current);
+  }, [loadActiveSessionWorkspace]);
 
   useEffect(() => () => {
     if (recalcPoll.current) window.clearInterval(recalcPoll.current);
@@ -251,6 +276,16 @@ export default function OperationPage() {
   // ─── Gerçek Zamanlı Canlı Güncelleme (WebSocket) ───
   const handleWsMessage = useCallback((msg: WsMessage) => {
     const d = msg.data;
+
+    if (msg.event === 'sessions_updated' && Array.isArray(d)) {
+      setSessions(d as WorkSessionItem[]);
+      return;
+    }
+
+    // Başka bir oturuma ait mesaj geldiyse yoksay
+    if (msg.session_id != null && msg.session_id !== currentSessionIdRef.current) {
+      return;
+    }
 
     if (d?.selected_group_id !== undefined) {
       setSelectedGroupId(d.selected_group_id);
@@ -321,7 +356,7 @@ export default function OperationPage() {
     }
   }, [phase, presentScan, hideRecalc]);
 
-  const live = useLiveUpdates(handleWsMessage);
+  const live = useLiveUpdates(handleWsMessage, currentSessionId);
   liveRef.current = live;
 
   const handleStockUpload = async (file: File, replace: boolean = true) => {
@@ -833,12 +868,28 @@ export default function OperationPage() {
     }
   };
 
+  const activeSessionObj = sessions.find(s => s.id === currentSessionId);
+  const activeSessionLabel = activeSessionObj
+    ? activeSessionObj.staff_name
+      ? `${activeSessionObj.name} • ${activeSessionObj.staff_name}`
+      : activeSessionObj.name
+    : `${currentSessionId}. Oturum`;
+
   return (
     <div className="op-page">
       <header className="op-header">
         <div className="op-header-brand">
           <Logo size="sm" variant="full" />
           <div className="op-header-status">
+            <button
+              type="button"
+              className="op-session-pill"
+              onClick={() => setShowSessionModal(true)}
+              title={`Aktif Çalışma Oturumu: ${activeSessionLabel} — Oturum değiştirmek veya yeni proje oturumu açmak için tıklayın`}
+            >
+              <Users size={12} />
+              <span className="op-session-pill-text">{activeSessionLabel}</span>
+            </button>
             {stockLoaded && <span className="op-badge ok">{stockCount.toLocaleString('tr-TR')} etiket</span>}
             <span className={`op-live ${live ? 'is-on' : 'is-off'}`}>
               <Radio size={12} />
@@ -985,6 +1036,16 @@ export default function OperationPage() {
         onClose={() => setShowBlockedPrintModal(false)}
         initialMode={blockedPrintMode}
         initialGroupId={blockedPrintGroupId}
+      />
+      <SessionModal
+        isOpen={showSessionModal}
+        onClose={() => setShowSessionModal(false)}
+        activeSessionId={currentSessionId}
+        sessions={sessions}
+        onSessionsChange={setSessions}
+        onSelectSession={sid => {
+          void loadActiveSessionWorkspace(sid);
+        }}
       />
 
       {error && <div className="op-alert error">{error}</div>}
