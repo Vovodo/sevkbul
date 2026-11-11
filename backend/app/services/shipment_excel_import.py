@@ -173,12 +173,17 @@ def import_shipment_targets_excel(
 ) -> ShipmentTargetImportResult:
     """Sevkiyat Excelini hedef listesine aktarır (FIFO henüz hesaplanmaz)."""
     from app.models import ShipmentTarget
+    from app.utils.excel_security import verify_and_sanitize_excel_upload, ExcelSecurityError
 
     result = ShipmentTargetImportResult()
     source_name = shipment_name_from_filename(filename)
 
     try:
+        verify_and_sanitize_excel_upload(file_content, filename or "sevkiyat.xlsx")
         wb = load_workbook(BytesIO(file_content), read_only=True, data_only=True)
+    except ExcelSecurityError as sec_err:
+        result.errors.append(ShipmentRowError(row=0, reason=str(sec_err)))
+        return result
     except Exception:
         result.errors.append(ShipmentRowError(row=0, reason="Excel dosyası açılamadı"))
         return result

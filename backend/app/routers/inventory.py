@@ -24,6 +24,7 @@ from app.utils.excel_parser import (
     find_column_mapping,
     find_shipment_column_mapping,
 )
+from app.utils.excel_security import verify_and_sanitize_excel_upload, ExcelSecurityError
 from app.ws_manager import ws_manager
 from sqlalchemy import func, or_
 from pydantic import BaseModel as _BaseModel
@@ -38,13 +39,15 @@ async def upload_stock_excel(
     db: Session = Depends(get_db),
 ):
     """Stok Exceli: ETİKET, REFERANS, MİKTAR, X98FIFO_TARIH"""
-    if not file.filename or not file.filename.endswith((".xlsx", ".xls")):
-        raise HTTPException(status_code=400, detail="Geçersiz dosya formatı. Excel (.xlsx) yükleyin.")
-
     try:
         content = await file.read()
     except Exception:
         raise HTTPException(status_code=400, detail="Excel dosyası okunamadı")
+
+    try:
+        sec_report = verify_and_sanitize_excel_upload(content, file.filename)
+    except ExcelSecurityError as sec_err:
+        raise HTTPException(status_code=400, detail=str(sec_err))
 
     result = import_excel(db, content, replace_existing=replace)
 
@@ -54,14 +57,14 @@ async def upload_stock_excel(
             detail=f"Eksik kolonlar: {', '.join(result.missing_columns)}",
         )
 
-    # Mini S3: Yeni stok Excel'ini diske ve PostgreSQL'e kaydet, eski stok Excel'ini sil
+    # Mini S3: Yalnızca güvenlikten ve şema kontrolünden %100 geçmiş dosyayı kaydet
     put_excel_object(
         db=db,
         slot="stock",
-        filename=file.filename,
+        filename=sec_report.filename,
         content=content,
         row_count=result.successful,
-        content_type=file.content_type or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
     has_active_shipments = (
@@ -495,12 +498,16 @@ async def inspect_excel_headers(
     from io import BytesIO
     from openpyxl import load_workbook
 
-    if not file.filename or not file.filename.endswith((".xlsx", ".xls")):
-        raise HTTPException(status_code=400, detail="Geçersiz dosya formatı. Excel (.xlsx) yükleyin.")
-
     try:
         content = await file.read()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Excel dosyası okunamadı")
+
+    try:
+        verify_and_sanitize_excel_upload(content, file.filename)
         wb = load_workbook(BytesIO(content), read_only=True, data_only=True)
+    except ExcelSecurityError as sec_err:
+        raise HTTPException(status_code=400, detail=str(sec_err))
     except Exception:
         raise HTTPException(status_code=400, detail="Excel dosyası açılamadı")
 

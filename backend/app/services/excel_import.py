@@ -49,10 +49,15 @@ class ImportResult:
 
 
 def import_excel(db: Session, file_content: bytes, replace_existing: bool = True) -> ImportResult:
+    from app.utils.excel_security import verify_and_sanitize_excel_upload, ExcelSecurityError
     result = ImportResult()
 
     try:
+        verify_and_sanitize_excel_upload(file_content, "stok.xlsx")
         wb = load_workbook(BytesIO(file_content), read_only=True, data_only=True)
+    except ExcelSecurityError as sec_err:
+        result.errors.append(RowError(row=0, reason=str(sec_err)))
+        return result
     except Exception:
         result.errors.append(RowError(row=0, reason="Excel dosyası açılamadı"))
         return result

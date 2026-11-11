@@ -115,14 +115,19 @@ async def import_targets_excel(
     replace: bool = True,
     db: Session = Depends(get_db),
 ):
-    if not file.filename or not file.filename.endswith((".xlsx", ".xls")):
-        raise HTTPException(status_code=400, detail="Geçersiz dosya formatı")
+    from app.utils.excel_security import verify_and_sanitize_excel_upload, ExcelSecurityError
+
     try:
         content = await file.read()
     except Exception:
         raise HTTPException(status_code=400, detail="Excel okunamadı")
 
-    result = import_shipment_targets_excel(db, content, replace=replace, filename=file.filename)
+    try:
+        sec_report = verify_and_sanitize_excel_upload(content, file.filename)
+    except ExcelSecurityError as sec_err:
+        raise HTTPException(status_code=400, detail=str(sec_err))
+
+    result = import_shipment_targets_excel(db, content, replace=replace, filename=sec_report.filename)
     if any(err.reason == UNSUITABLE_SHIPMENT for err in result.errors):
         raise HTTPException(status_code=400, detail=UNSUITABLE_SHIPMENT)
     if result.missing_columns:
@@ -133,10 +138,10 @@ async def import_targets_excel(
         put_excel_object(
             db=db,
             slot="shipment",
-            filename=file.filename,
+            filename=sec_report.filename,
             content=content,
             row_count=result.successful,
-            content_type=file.content_type or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
     response = ShipmentTargetImportResultSchema(

