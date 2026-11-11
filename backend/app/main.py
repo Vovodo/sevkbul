@@ -118,21 +118,24 @@ def _purge_cancelled_shipments() -> None:
 async def lifespan(app: FastAPI):
     # WebSocket broadcast için ana event loop referansını kaydet
     ws_manager.set_event_loop(asyncio.get_running_loop())
-    # Veritabanı tabloları yoksa otomatik oluştur
-    database.Base.metadata.create_all(bind=database.engine)
-    _ensure_target_source_name()
-    _ensure_shipment_stock_note()
-    _ensure_shipment_sort_order()
-    _ensure_inventory_blocked()
-    _purge_cancelled_shipments()
-    db = database.SessionLocal()
+    # Veritabanı tabloları yoksa otomatik oluştur (hata olsa bile sunucu 503 vermesin)
     try:
-        from app.services.s3_storage import hydrate_storage_on_startup
-        hydrate_storage_on_startup(db)
-        backfill_missing_quotas(db)
-        lookup_cache.load_all_active(db)
-    finally:
-        db.close()
+        database.Base.metadata.create_all(bind=database.engine)
+        _ensure_target_source_name()
+        _ensure_shipment_stock_note()
+        _ensure_shipment_sort_order()
+        _ensure_inventory_blocked()
+        _purge_cancelled_shipments()
+        db = database.SessionLocal()
+        try:
+            from app.services.s3_storage import hydrate_storage_on_startup
+            hydrate_storage_on_startup(db)
+            backfill_missing_quotas(db)
+            lookup_cache.load_all_active(db)
+        finally:
+            db.close()
+    except Exception as exc:
+        print(f"[STARTUP ERROR] Veritabanı başlangıç hazırlığında hata oluştu: {exc}")
     yield
     for ws in list(ws_manager.active_connections):
         try:

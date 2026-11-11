@@ -13,7 +13,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Uygulama kaynak kodu
 COPY . .
 
-ENV DATABASE_URL="sqlite:///./sevkbul.db"
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
